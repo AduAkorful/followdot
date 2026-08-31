@@ -1,0 +1,21 @@
+{
+  "name": "@followdot/autocopy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.70.0",
+    "@types/node": "^22.0.0",
+    "@cloudflare/workers-types": "4.x"
+  },
+  "dependencies": {
+    "@followdot/sdk-helpers": "workspace:*",
+    "@somnia-chain/markets-sdk": "^0.28.0",
+    "viem": "^2.0.0"
+  }
+}

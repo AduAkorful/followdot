@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+/.pnpm
+/.turbo
+
+# Build outputs
+.next/
+.out/
+dist/
+.build/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Environment
+.env
+.env*.local
+.dev.vars
+
+# Cloudflare & Runtime
+.wrangler/
+.mf/
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Internal Planning & Development Docs
+AGENTS.md
+plans/
+docs/

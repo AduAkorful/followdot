@@ -1,0 +1,4 @@
+
+> @followdot/sdk-helpers@0.1.0 typecheck /home/aduakorful/dev/followdot/packages/sdk-helpers
+> tsc --noEmit
+

@@ -1,0 +1,26 @@
+
+> web@0.1.0 build /home/aduakorful/dev/followdot/apps/web
+> next build
+
+▲ Next.js 16.3.3 (Turbopack)
+✓ Running next.config.ts took 56ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 5.2s
+  Finished TypeScript in 13.2s    ✓ Finished TypeScript in 13.2s 
+  Collecting page data using 3 workers in 872ms    ✓ Collecting page data using 3 workers in 872ms 
+✓ Generating static pages using 3 workers (7/7) in 1082ms
+  Finalizing page optimization in 9ms    ✓ Finalizing page optimization in 9ms 
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /claim
+├ ○ /performance
+├ ○ /settings
+└ ƒ /whale/[address]
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

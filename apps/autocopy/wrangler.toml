@@ -1,0 +1,21 @@
+name = "followdot-autocopy"
+main = "src/index.ts"
+compatibility_date = "2026-08-27"
+
+# Secrets — set via:
+#   wrangler secret put API_TOKEN
+# Referenced as env.API_TOKEN in src/index.ts. If unset, route auth is
+# bypassed (the token check is gated on `if (env.API_TOKEN)`).
+
+[triggers]
+crons = ["*/1 * * * *"]  # every minute
+
+[[kv_namespaces]]
+binding = "WHALE_KV"
+id = "followdot-whales"
+preview_id = "followdot-whales-preview"
+
+[[kv_namespaces]]
+binding = "SESSION_KEYS_KV"
+id = "followdot-session-keys"
+preview_id = "followdot-session-keys-preview"

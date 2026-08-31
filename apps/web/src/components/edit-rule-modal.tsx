@@ -1,0 +1,133 @@
+'use client';
+
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+
+export interface AutoCopyRule {
+  whaleAddress: string;
+  maxStake: number;
+  slippageCap: number;
+  status: 'ACTIVE' | 'PAUSED';
+}
+
+interface EditRuleModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  rule: AutoCopyRule | null;
+  onSaveRule: (updatedRule: AutoCopyRule) => void;
+}
+
+export function EditRuleModal({
+  open,
+  onOpenChange,
+  rule,
+  onSaveRule,
+}: EditRuleModalProps) {
+  if (!rule) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]">
+        <EditRuleForm key={rule.whaleAddress} rule={rule} onSaveRule={onSaveRule} onCancel={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditRuleForm({
+  rule,
+  onSaveRule,
+  onCancel,
+}: {
+  rule: AutoCopyRule;
+  onSaveRule: (updatedRule: AutoCopyRule) => void;
+  onCancel: () => void;
+}) {
+  const [maxStake, setMaxStake] = useState(rule.maxStake);
+  const [slippageCap, setSlippageCap] = useState(rule.slippageCap);
+  const [status, setStatus] = useState<'ACTIVE' | 'PAUSED'>(rule.status);
+
+  const handleSave = () => {
+    onSaveRule({
+      ...rule,
+      maxStake,
+      slippageCap,
+      status,
+    });
+    onCancel();
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="text-lg font-bold">Edit Auto-Copy Rule</DialogTitle>
+        <DialogDescription className="text-[var(--text-secondary)] text-sm font-mono">
+          Whale: {rule.whaleAddress.slice(0, 6)}…{rule.whaleAddress.slice(-4)}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-4 py-3">
+        <div>
+          <Label className="text-xs text-[var(--text-secondary)]">Max Stake Per Trade (USDC)</Label>
+          <Input
+            type="number"
+            value={maxStake}
+            onChange={(e) => setMaxStake(Number(e.target.value))}
+            min={1}
+            max={10000}
+            className="mt-1 bg-[var(--bg-input)] border-[var(--border)]"
+          />
+        </div>
+
+        <div>
+          <Label className="text-xs text-[var(--text-secondary)]">Slippage Cap (%)</Label>
+          <Input
+            type="number"
+            value={slippageCap}
+            onChange={(e) => setSlippageCap(Number(e.target.value))}
+            min={0.1}
+            max={5.0}
+            step={0.1}
+            className="mt-1 bg-[var(--bg-input)] border-[var(--border)]"
+          />
+        </div>
+
+        <div>
+          <Label className="text-xs text-[var(--text-secondary)]">Rule Status</Label>
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              type="button"
+              onClick={() => setStatus('ACTIVE')}
+              className={`btn btn-sm ${status === 'ACTIVE' ? 'btn-accent' : 'btn-ghost'}`}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatus('PAUSED')}
+              className={`btn btn-sm ${status === 'PAUSED' ? 'badge-red' : 'btn-ghost'}`}
+            >
+              Paused
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <DialogFooter className="gap-2">
+        <Button
+          variant="ghost"
+          onClick={onCancel}
+          className="text-[var(--text-secondary)]"
+        >
+          Cancel
+        </Button>
+        <Button onClick={handleSave} className="btn-accent">
+          Save Changes
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}

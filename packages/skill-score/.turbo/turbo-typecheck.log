@@ -1,0 +1,4 @@
+
+> @followdot/skill-score@0.1.0 typecheck /home/aduakorful/dev/followdot/packages/skill-score
+> tsc --noEmit
+
