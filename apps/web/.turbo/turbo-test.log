@@ -6,24 +6,10 @@
 
  RUN  v2.1.9 /home/aduakorful/dev/followdot/apps/web
 
-[?25l ✓ src/lib/whales.test.ts (5)
-   ✓ extractTopTraders (5)
-     ✓ extracts unique trader addresses ranked by fill count
-     ✓ filters out invalid addresses
-     ✓ respects maxTraders limit
-     ✓ extracts addresses from takerOrder.owner
-     ✓ returns empty array for empty fills
-[?25l[?25l[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[1A[2K[G ✓ src/lib/whales.test.ts (5)
-   ✓ extractTopTraders (5)
-     ✓ extracts unique trader addresses ranked by fill count
-     ✓ filters out invalid addresses
-     ✓ respects maxTraders limit
-     ✓ extracts addresses from takerOrder.owner
-     ✓ returns empty array for empty fills
+ ✓ src/lib/whales.test.ts (5 tests) 9ms
 
  Test Files  1 passed (1)
       Tests  5 passed (5)
-   Start at  20:59:20
-   Duration  4.13s (transform 263ms, setup 372ms, collect 750ms, tests 9ms, environment 1.93s, prepare 223ms)
+   Start at  11:17:34
+   Duration  6.45s (transform 562ms, setup 516ms, collect 804ms, tests 9ms, environment 3.67s, prepare 421ms)
 
-[?25h[?25h

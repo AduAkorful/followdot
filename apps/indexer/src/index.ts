@@ -4,41 +4,45 @@ interface Env {
   WHALE_KV: KVNamespace;
   SKILL_KV: KVNamespace;
   API_TOKEN?: string;
-  // Optional overrides — if unset, defaults to the testnet stg.api.dreamdex.io.
+  // Required runtime endpoints. Missing values fail closed during execution.
   DREAMDEX_REST_URL?: string;
   DREAMDEX_WS_URL?: string;
 }
 
 const WHALE_LEADERBOARD_LIMIT = 20;
 
+async function runIndex(env: Env): Promise<void> {
+  const sdk = createDreamDexSDK({
+    restUrl: env.DREAMDEX_REST_URL,
+    wsUrl: env.DREAMDEX_WS_URL,
+  });
+
+  try {
+    // Discover top traders from recent fills via the indexer
+    const fills = await fetchRecentFills(WHALE_LEADERBOARD_LIMIT * 25);
+    const topTraders = extractTopTraders(fills, WHALE_LEADERBOARD_LIMIT);
+
+    // Store discovered whale addresses in WHALE_KV
+    for (const addr of topTraders) {
+      await env.WHALE_KV.put(`whale:${addr}`, addr);
+    }
+
+    // Compute and persist skill scores for all stored whales
+    const results = await computeSkillScores(sdk, env.WHALE_KV, env.SKILL_KV);
+    await persistToKV(env.SKILL_KV, results);
+  } catch (err) {
+    console.error('[indexer] indexing failed:', err);
+    throw err;
+  }
+}
+
 export default {
   async scheduled(
-    controller: ScheduledController,
+    _controller: ScheduledController,
     env: Env,
-    ctx: ExecutionContext,
+    _ctx: ExecutionContext,
   ): Promise<void> {
-    const sdk = createDreamDexSDK({
-      restUrl: env.DREAMDEX_REST_URL,
-      wsUrl: env.DREAMDEX_WS_URL,
-    });
-
-    try {
-      // Discover top traders from recent fills via the indexer
-      const fills = await fetchRecentFills(WHALE_LEADERBOARD_LIMIT * 25);
-      const topTraders = extractTopTraders(fills, WHALE_LEADERBOARD_LIMIT);
-
-      // Store discovered whale addresses in WHALE_KV
-      for (const addr of topTraders) {
-        await env.WHALE_KV.put(`whale:${addr}`, addr);
-      }
-
-      // Compute and persist skill scores for all stored whales
-      const results = await computeSkillScores(sdk, env.WHALE_KV, env.SKILL_KV);
-      await persistToKV(env.SKILL_KV, results);
-    } catch (err) {
-      console.error('[indexer] scheduled task failed:', err);
-      throw err;
-    }
+    await runIndex(env);
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -52,20 +56,16 @@ export default {
 
     // All other routes require a valid API token
     const token = request.headers.get('x-api-token');
-    if (env.API_TOKEN && token !== env.API_TOKEN) {
+    if (!env.API_TOKEN) {
+      return new Response('Authorization is not configured', { status: 503 });
+    }
+    if (token !== env.API_TOKEN) {
       return new Response('Unauthorized', { status: 401 });
     }
 
     if (url.pathname === '/index') {
-      return this.scheduled(
-        { scheduledTime: Date.now() } as ScheduledController,
-        env,
-        {
-          waitUntil: () => {},
-          passThroughOnException: () => {},
-          blockWorkers: () => {},
-        } as ExecutionContext,
-      ).then(() => new Response('indexed', { status: 200 }));
+      await runIndex(env);
+      return new Response('indexed', { status: 200 });
     }
 
     return new Response('Not found', { status: 404 });

@@ -17,7 +17,10 @@ export function Sparkline({
   color,
   id = 'sparkGrad',
 }: SparklineProps) {
-  const points = data && data.length >= 2 ? data : [0, 0];
+  if (!data || data.length < 2) {
+    return <div className="h-8 text-xs text-[var(--text-muted)]">Unavailable</div>;
+  }
+  const points = data;
   const min = Math.min(...points);
   const max = Math.max(...points);
   const hasRange = max !== min;

@@ -4,8 +4,11 @@ compatibility_date = "2026-08-27"
 
 # Secrets — set via:
 #   wrangler secret put API_TOKEN
-# Referenced as env.API_TOKEN in src/index.ts. If unset, route auth is
-# bypassed (the token check is gated on `if (env.API_TOKEN)`).
+# Referenced as env.API_TOKEN in src/index.ts. If unset, authenticated routes
+# fail closed with HTTP 503 until the secret is configured.
+
+# Required runtime endpoints are configured as vars or secrets:
+#   DREAMDEX_REST_URL and DREAMDEX_WS_URL
 
 [triggers]
 crons = ["*/1 * * * *"]  # every minute

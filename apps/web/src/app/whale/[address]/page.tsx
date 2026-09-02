@@ -5,6 +5,7 @@ import { useWhaleProfile } from '@/hooks/use-whale-profile';
 import { useCopyOrder } from '@/hooks/use-copy-order';
 import { CopyOrderModal } from '@/components/copy-order-modal';
 import { EquityCurve } from '@/components/equity-curve';
+import { EdgeAnalysisScatter } from '@/components/edge-analysis-scatter';
 import { ArrowLeft, Loader2, AlertCircle, Copy, Check, Play } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -24,20 +25,27 @@ function formatPnL(pnl: number): string {
   return `${sign}${pnl.toFixed(2)}`;
 }
 
+function formatEdge(bps: number | null): string {
+  if (bps === null) return '—';
+  const sign = bps > 0 ? '+' : '';
+  return `${sign}${bps.toFixed(0)} bps`;
+}
+
 export default function WhaleProfile() {
   const params = useParams<{ address: string }>();
   const address = params?.address ?? '';
   const { data, isLoading, isError, error } = useWhaleProfile(address);
 
   const [copyOpen, setCopyOpen] = useState(false);
-  const [isFollowing, setIsFollowing] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<{
     pool: string;
+    marketId: string;
     side: BinarySide;
   } | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [copyHash, setCopyHash] = useState<string | null>(null);
   const copyOrder = useCopyOrder();
+  const [activeTab, setActiveTab] = useState<'fills' | 'edge'>('fills');
 
   const equityDataPoints = useMemo(() => {
     if (!data) return [];
@@ -54,8 +62,8 @@ export default function WhaleProfile() {
     });
   }, [data]);
 
-  const handleCopyClick = (pool: string, side: BinarySide) => {
-    setSelectedMarket({ pool, side });
+  const handleCopyClick = (pool: string, marketId: string, side: BinarySide) => {
+    setSelectedMarket({ pool, marketId, side });
     setCopyOpen(true);
   };
 
@@ -65,15 +73,18 @@ export default function WhaleProfile() {
     slippageTolerance: number;
   }): Promise<string> => {
     if (!selectedMarket) throw new Error('No market selected');
+    if (!data) throw new Error('Whale profile data unavailable');
     setCopyError(null);
     setCopyHash(null);
     try {
-      const stake = BigInt(Math.max(1, Math.floor(params.maxNotionalUSD * params.bankrollPct)));
       const slippageBps = Math.max(0, Math.round(params.slippageTolerance * 10_000));
       const result = await copyOrder.mutateAsync({
         pool: selectedMarket.pool,
+        marketId: selectedMarket.marketId,
+        whaleAddress: data.address,
         whaleSide: selectedMarket.side,
-        stake,
+        stakeHuman: params.maxNotionalUSD * params.bankrollPct,
+        exposureCap: params.maxNotionalUSD,
         slippageBps,
       });
       setCopyHash(result.hash);
@@ -117,7 +128,7 @@ export default function WhaleProfile() {
     (a, b) => Number(b.timestamp) - Number(a.timestamp),
   );
 
-  const firstCopyMarket = data.marketPnL.find((m) => m.marketAddress);
+  const firstCopyPosition = data.openPositions[0];
 
   return (
     <div className="space-y-6">
@@ -147,16 +158,17 @@ export default function WhaleProfile() {
 
         <div className="profile-actions">
           <button
-            onClick={() => setIsFollowing(!isFollowing)}
-            className={`btn ${isFollowing ? 'btn-accent' : 'btn-outline'}`}
+            disabled
+            title="Auto-follow requires a live session-key authorization"
+            className="btn btn-outline disabled:opacity-50"
           >
-            {isFollowing ? <Check className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />}
-            {isFollowing ? 'Auto-Following' : 'Auto-Follow'}
+            <Play className="w-4 h-4 mr-1" />
+            Auto-Follow unavailable
           </button>
 
           <button
-            onClick={() => handleCopyClick(firstCopyMarket?.marketAddress ?? '', 'BUY_YES')}
-            disabled={!firstCopyMarket}
+              onClick={() => handleCopyClick(firstCopyPosition?.pool ?? '', firstCopyPosition?.marketId ?? '', firstCopyPosition?.side ?? 'BUY_YES')}
+            disabled={!firstCopyPosition}
             className="btn btn-accent disabled:opacity-40"
           >
             <Copy className="w-4 h-4 mr-1" />
@@ -241,6 +253,67 @@ export default function WhaleProfile() {
       </div>
 
       {/* Category Breakdown & Per-Market Table Grid */}
+      <div className="card animate-in delay-3">
+        <div className="card-header">
+          <h3 className="card-title">Live Open Positions</h3>
+          <p className="card-desc">Current outcome-token holdings from the wallet portfolio</p>
+        </div>
+        <div className="card-body p-0 mt-2 overflow-x-auto">
+          {data.openPositions.length === 0 ? (
+            <div className="text-sm text-[var(--text-muted)] py-8 text-center">
+              No live open positions available for copying.
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Market</th>
+                  <th>Type</th>
+                  <th>Side</th>
+                  <th className="right">Stake</th>
+                  <th className="right">Unrealized PnL</th>
+                  <th className="right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.openPositions.map((position) => (
+                  <tr key={position.marketId}>
+                    <td className="mono text-xs">{shortenAddress(position.marketAddress)}</td>
+                    <td><span className="badge badge-outline">{position.marketType}</span></td>
+                    <td><span className="badge badge-accent">{position.side}</span></td>
+                    <td className="right mono">${position.stakeHuman.toFixed(2)}</td>
+                    <td className={`right mono font-semibold ${position.unrealizedPnlHuman >= 0 ? 'green' : 'red'}`}>
+                      {formatPnL(position.unrealizedPnlHuman)}
+                    </td>
+                    <td className="right">
+                      <button
+                        onClick={() => handleCopyClick(position.pool, position.marketId, position.side)}
+                        className="btn btn-accent btn-sm"
+                      >
+                        Copy
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {data.calibrationByMarketType.size > 0 && (
+            <div className="mt-6 border-t border-[var(--border)] pt-4">
+              <h4 className="text-sm font-semibold mb-3">Calibration by market type</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[...data.calibrationByMarketType.entries()].map(([marketType, result]) => (
+                  <div key={marketType} className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--text-secondary)]">{marketType}</span>
+                    <span className="font-mono">{Math.round(result.score * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="grid-2 animate-in delay-4">
         {/* Category Breakdown */}
         <div className="card">
@@ -290,7 +363,6 @@ export default function WhaleProfile() {
                     <th>Type</th>
                     <th className="right">Trades</th>
                     <th className="right">PnL</th>
-                    <th className="right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -298,7 +370,6 @@ export default function WhaleProfile() {
                     .sort((a, b) => b.tradeCount - a.tradeCount)
                     .slice(0, 5)
                     .map((m) => {
-                      const side: BinarySide = (data.fills.find((f) => f.market === m.marketId)?.takerSide ?? 'BUY_YES');
                       return (
                         <tr key={m.marketId}>
                           <td className="mono text-xs font-medium">
@@ -311,15 +382,6 @@ export default function WhaleProfile() {
                           <td className={`right mono font-semibold ${m.pnl >= 0 ? 'green' : 'red'}`}>
                             {formatPnL(m.pnl)}
                           </td>
-                          <td className="right">
-                            <button
-                              onClick={() => handleCopyClick(m.marketAddress, side)}
-                              disabled={!m.marketAddress}
-                              className="btn btn-accent btn-sm disabled:opacity-40"
-                            >
-                              Copy
-                            </button>
-                          </td>
                         </tr>
                       );
                     })}
@@ -330,48 +392,162 @@ export default function WhaleProfile() {
         </div>
       </div>
 
-      {/* Recent Fills Table */}
+      {/* F8: Calibration Section */}
       <div className="card animate-in delay-5">
-        <div className="card-header">
-          <h3 className="card-title">Recent On-Chain Fills</h3>
-          <p className="card-desc">Individual order execution history</p>
+        <div className="card-header flex flex-row items-center justify-between">
+          <div>
+            <h3 className="card-title">Probability Calibration</h3>
+            <p className="card-desc">
+              How well {shortenAddress(s.address)}&apos;s implied confidence matches actual resolution rates
+            </p>
+          </div>
+          <span className={`badge ${data.calibration ? data.calibration.score >= 0.7 ? 'badge-green' : data.calibration.score >= 0.4 ? 'badge-amber' : 'badge-red' : 'badge-outline'} font-mono text-xs`}>
+            {data.calibration ? `${Math.round(data.calibration.score * 100)}% Calibrated` : 'No data'}
+          </span>
         </div>
-        <div className="card-body p-0 mt-4 overflow-x-auto">
-          {!data.fills || data.fills.length === 0 ? (
-            <div className="text-center py-12 text-[var(--text-muted)]">No trade fills recorded.</div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Market</th>
-                  <th>Timestamp</th>
-                  <th>Side</th>
-                  <th className="right">Quantity</th>
-                  <th className="right">Price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedFills.slice(0, 15).map((f) => (
-                  <tr key={f.id}>
-                    <td className="mono text-xs font-medium">{shortenAddress(f.market)}</td>
-                    <td className="mono text-xs text-[var(--text-muted)]">
-                      {f.timestamp ? new Date(Number(f.timestamp) * 1000).toLocaleString() : '—'}
-                    </td>
-                    <td>
-                      <span className="badge badge-accent">
-                        {f.takerSide ?? (f.takerIsBid ? 'BUY' : 'SELL')}
+        <div className="card-body mt-4">
+          {data.calibration && data.calibration.buckets.length > 0 ? (
+            <div className="space-y-4">
+              <div className="flex items-end justify-between text-xs text-[var(--text-muted)] mb-2">
+                <span>Implied Probability</span>
+                <span>Actual Win Rate</span>
+              </div>
+              <div className="h-64 flex items-end gap-2">
+                {data.calibration.buckets.map((bucket) => {
+                  const midPct = Math.round(bucket.midpoint * 100);
+                  const actualPct = Math.round(bucket.actualWinRate * 100);
+                  const deviation = Math.abs(bucket.actualWinRate - bucket.midpoint);
+                  const barColor = deviation < 0.1 ? 'var(--green)' : deviation < 0.2 ? 'var(--amber)' : 'var(--red)';
+                  const barHeight = Math.max(10, (bucket.actualWinRate / 1) * 200);
+                  return (
+                    <div key={bucket.lowerBound} className="flex-1 flex flex-col items-center">
+                      <div
+                        className="w-full rounded-t transition-colors"
+                        style={{
+                          height: `${barHeight}px`,
+                          backgroundColor: barColor,
+                          opacity: 0.7,
+                        }}
+                        title={`${midPct}% implied → ${actualPct}% actual (${bucket.wins}/${bucket.total})`}
+                      />
+                      <span className="text-xs text-[var(--text-secondary)] mt-1">
+                        {midPct}%
                       </span>
-                    </td>
-                    <td className="right mono text-xs">
-                      {f.quantity ? Number(f.quantity).toFixed(2) : '—'}
-                    </td>
-                    <td className="right mono font-semibold text-[var(--accent)]">
-                      {f.fillPrice ? `$${Number(f.fillPrice).toFixed(4)}` : '—'}
-                    </td>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="h-px bg-[var(--border)] my-2" />
+              <div className="flex justify-center">
+                <div className="flex items-center gap-4 text-xs text-[var(--text-secondary)]">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-[var(--green)]" />
+                    <span>Well-calibrated (deviation &lt; 10%)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-[var(--amber)]" />
+                    <span>Miscalibrated (deviation 10-20%)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-[var(--red)]" />
+                    <span>Poorly calibrated (deviation &gt; 20%)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-[var(--text-muted)] py-8 text-center">
+              Insufficient data for calibration analysis.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* F7: Fills / Edge Analysis Tabs */}
+      <div className="card animate-in delay-5">
+        <div className="card-header flex flex-row items-center justify-between">
+          <div>
+            <h3 className="card-title">On-Chain Fills</h3>
+            <p className="card-desc">Individual order execution history</p>
+          </div>
+          <div className="flex items-center gap-1 bg-[var(--bg-body)] rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab('fills')}
+              className={`px-3 py-1.5 text-xs font-medium rounded ${
+                activeTab === 'fills' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Fills Table
+            </button>
+            <button
+              onClick={() => setActiveTab('edge')}
+              className={`px-3 py-1.5 text-xs font-medium rounded ${
+                activeTab === 'edge' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Edge Analysis
+            </button>
+          </div>
+        </div>
+
+        <div className="card-body p-0 mt-4 overflow-x-auto">
+          {activeTab === 'fills' ? (
+            !data.fills || data.fills.length === 0 ? (
+              <div className="text-center py-12 text-[var(--text-muted)]">No trade fills recorded.</div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Market</th>
+                    <th>Timestamp</th>
+                    <th>Side</th>
+                    <th className="right">Quantity</th>
+                    <th className="right">Price</th>
+                    <th className="right">Edge (F7)</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sortedFills.slice(0, 15).map((f) => {
+                    const edge = data.edges?.get(f.id);
+                    const edgeBps = edge?.edgeBps ?? null;
+                    const isEdgePositive = edgeBps !== null && edgeBps > 0;
+                    const edgeClass = edgeBps !== null
+                      ? (isEdgePositive ? 'red' : 'green')
+                      : 'text-[var(--text-secondary)]';
+                    return (
+                      <tr key={f.id}>
+                        <td className="mono text-xs font-medium">{shortenAddress(f.market)}</td>
+                        <td className="mono text-xs text-[var(--text-muted)]">
+                          {f.timestamp ? new Date(Number(f.timestamp) * 1000).toLocaleString() : '—'}
+                        </td>
+                        <td>
+                          <span className="badge badge-accent">
+                            {f.takerSide ?? (f.takerIsBid ? 'BUY' : 'SELL')}
+                          </span>
+                        </td>
+                        <td className="right mono text-xs">
+                          {f.quantity ? Number(f.quantity).toFixed(2) : '—'}
+                        </td>
+                        <td className="right mono font-semibold text-[var(--accent)]">
+                          {f.fillPrice ? `$${Number(f.fillPrice).toFixed(4)}` : '—'}
+                        </td>
+                        <td className={`right mono font-semibold ${edgeClass}`}>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span>{formatEdge(edgeBps)}</span>
+                            {edge?.unavailableReason && (
+                              <span className="text-xs text-[var(--text-muted)]" title={edge.unavailableReason}>unavailable</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          ) : (
+            // F7: Edge Analysis — Scatter plot of fill price vs fair value
+            <EdgeAnalysisScatter edges={data.edges ? Array.from(data.edges.values()) : []} />
           )}
         </div>
       </div>
@@ -381,6 +557,8 @@ export default function WhaleProfile() {
           open={copyOpen}
           onOpenChange={setCopyOpen}
           whaleAddress={data.address}
+          marketId={selectedMarket.marketId}
+          pool={selectedMarket.pool}
           onPlaceOrder={handlePlaceOrder}
         />
       )}

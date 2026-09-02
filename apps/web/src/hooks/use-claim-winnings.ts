@@ -11,7 +11,10 @@ export function useClaimablePositions() {
     queryKey: [CLAIMABLE_QUERY_KEY, address],
     queryFn: async () => {
       if (!address) throw new Error("Wallet not connected");
-      const sdk = createDreamDexSDK();
+      const sdk = createDreamDexSDK({
+        restUrl: process.env.NEXT_PUBLIC_DREAMDEX_REST,
+        wsUrl: process.env.NEXT_PUBLIC_DREAMDEX_WS,
+      });
       return getClaimablePositions(sdk, address);
     },
     enabled: !!address,
@@ -28,7 +31,10 @@ export function useClaimWinnings() {
     mutationFn: async ({ entries }) => {
       if (!address) throw new Error("Wallet not connected");
       if (entries.length === 0) throw new Error("No claimable positions");
-      const sdk = createDreamDexSDK();
+      const sdk = createDreamDexSDK({
+        restUrl: process.env.NEXT_PUBLIC_DREAMDEX_REST,
+        wsUrl: process.env.NEXT_PUBLIC_DREAMDEX_WS,
+      });
       const result = await redeemAll(sdk, entries);
       return result;
     },

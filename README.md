@@ -60,7 +60,7 @@ flowchart TB
     subgraph SomniaChain["Somnia Testnet (Chain 50312)"]
         DreamDEX["DreamDEX Event Contracts"]
         RPC["Somnia JSON-RPC"]
-        IndexerAPI["DreamDEX Indexer (stg.api.dreamdex.io)"]
+        IndexerAPI["DreamDEX Indexer (dev.smk.somnia.host)"]
     end
 
     UI -->|Connect Wallet| Privy
@@ -154,8 +154,8 @@ Set your Privy App ID inside `.env`:
 ```ini
 NEXT_PUBLIC_CHAIN_ID=50312
 NEXT_PUBLIC_RPC_URL=https://dream-rpc.somnia.network
-NEXT_PUBLIC_DREAMDEX_REST=https://stg.api.dreamdex.io/v0
-NEXT_PUBLIC_DREAMDEX_WS=wss://stg.api.dreamdex.io/v0/ws/public
+NEXT_PUBLIC_DREAMDEX_REST=https://dev.smk.somnia.host/v1/graphql
+NEXT_PUBLIC_DREAMDEX_WS=wss://api.infra.testnet.somnia.network/ws
 NEXT_PUBLIC_PRIVY_APP_ID=your_privy_app_id
 ```
 

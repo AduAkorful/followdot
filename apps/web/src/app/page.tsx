@@ -3,10 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useWhaleLeaderboard } from '@/hooks/use-whales';
-import { useCopyOrder } from '@/hooks/use-copy-order';
 import { Sparkline } from '@/components/sparkline';
 import { Pagination } from '@/components/pagination';
-import { CopyOrderModal } from '@/components/copy-order-modal';
 import { Search, Loader2, AlertCircle } from 'lucide-react';
 
 function shortenAddress(addr: string): string {
@@ -27,17 +25,23 @@ function formatPnL(pnl: number): string {
 
 export default function Home() {
   const { data: whales = [], isLoading, isError, error } = useWhaleLeaderboard(50);
-  const copyOrder = useCopyOrder();
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortBy, setSortBy] = useState<'skill' | 'calibration'>('skill');
   const pageSize = 10;
 
-  const [copyModalOpen, setCopyModalOpen] = useState(false);
-  const [selectedWhale, setSelectedWhale] = useState<string | null>(null);
 
-  const filtered = search
+  const filteredByAddress = search
     ? whales.filter((w) => w.address.toLowerCase().includes(search.toLowerCase()))
     : whales;
+  const filtered = [...filteredByAddress].sort((a, b) => {
+    if (sortBy === 'calibration') {
+      if (a.calibrationScore === null) return 1;
+      if (b.calibrationScore === null) return -1;
+      return b.calibrationScore - a.calibrationScore;
+    }
+    return b.score - a.score;
+  });
 
   const totalEntries = filtered.length;
   const paginatedWhales = filtered.slice(
@@ -56,13 +60,6 @@ export default function Home() {
     return `$${v.toFixed(0)}`;
   };
 
-  const handleOpenCopy = (address: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setSelectedWhale(address);
-    setCopyModalOpen(true);
-  };
-
   return (
     <div className="space-y-6">
       <div className="animate-in">
@@ -77,8 +74,8 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Whales Tracked</div>
           <div className="stat-row">
-            <div className="stat-value">{whales.length}</div>
-            <span className="stat-trend up">{whales.length > 0 ? 'Live' : '0'}</span>
+            <div className="stat-value">{whales.length > 0 ? whales.length : 'Unavailable'}</div>
+            <span className="stat-trend up">{whales.length > 0 ? 'Live' : 'No live data'}</span>
           </div>
           <Sparkline trend="up" height={32} id="stat1" data={whales.map(w => w.score * 100)} />
         </div>
@@ -87,19 +84,19 @@ export default function Home() {
           <div className="stat-label">Avg Skill Score</div>
           <div className="stat-row">
             <div className="stat-value">
-              {avgSkillScore}
-              <span className="text-base text-[var(--text-muted)]">%</span>
+              {whales.length > 0 ? avgSkillScore : 'Unavailable'}
+              {whales.length > 0 && <span className="text-base text-[var(--text-muted)]">%</span>}
             </div>
-            <span className="stat-trend up">{whales.length > 0 ? 'Live' : '0%'}</span>
+            <span className="stat-trend up">{whales.length > 0 ? 'Live' : 'No live data'}</span>
           </div>
           <Sparkline trend="up" height={32} id="stat2" data={whales.map(w => w.score * 100)} />
         </div>
 
         <div className="stat-card">
-          <div className="stat-label">Volume Mirrored</div>
+          <div className="stat-label">Indexed Realized PnL</div>
           <div className="stat-row">
-            <div className="stat-value">{formatVol(totalVolume)}</div>
-            <span className="stat-trend up">{totalVolume > 0 ? 'Live' : '$0'}</span>
+            <div className="stat-value">{whales.length > 0 ? formatVol(totalVolume) : 'Unavailable'}</div>
+            <span className="stat-trend up">{whales.length > 0 ? 'Live' : 'No live data'}</span>
           </div>
           <Sparkline trend="up" height={32} id="stat3" data={whales.map(w => Math.abs(w.totalRealizedPnL))} />
         </div>
@@ -107,10 +104,9 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Active Copiers</div>
           <div className="stat-row">
-            <div className="stat-value">0</div>
-            <span className="stat-trend up">0</span>
+            <div className="stat-value text-base">Unavailable</div>
+            <span className="badge badge-outline">No live source</span>
           </div>
-          <Sparkline trend="up" height={32} id="stat4" data={[0, 0]} />
         </div>
       </div>
 
@@ -162,10 +158,19 @@ export default function Home() {
                 <tr>
                   <th style={{ width: '60px' }}>Rank</th>
                   <th>Trader</th>
-                  <th>Skill Score</th>
+                  <th>
+                    <button type="button" onClick={() => setSortBy('skill')} className="hover:text-[var(--accent)]">
+                      Skill Score{sortBy === 'skill' ? ' ↓' : ''}
+                    </button>
+                  </th>
                   <th className="right">Win Rate</th>
                   <th className="right">Settled Markets</th>
                   <th className="right">Realized PnL</th>
+                  <th className="right">
+                    <button type="button" onClick={() => setSortBy('calibration')} className="hover:text-[var(--accent)]">
+                      Calibration{sortBy === 'calibration' ? ' ↓' : ''}
+                    </button>
+                  </th>
                   <th className="right" style={{ width: '100px' }}>Action</th>
                 </tr>
               </thead>
@@ -221,13 +226,13 @@ export default function Home() {
                       <td className={`right mono font-semibold ${isPositive ? 'green' : 'red'}`}>
                         {pnlStr} USDC
                       </td>
+                      <td className="right mono">
+                        {whale.calibrationScore === null ? 'unavailable' : `${Math.round(whale.calibrationScore * 100)}%`}
+                      </td>
                       <td className="right">
-                        <button
-                          onClick={(e) => handleOpenCopy(whale.address, e)}
-                          className="btn btn-accent btn-sm"
-                        >
-                          Copy
-                        </button>
+                        <Link href={`/whale/${whale.address}`} className="btn btn-accent btn-sm">
+                          View profile
+                        </Link>
                       </td>
                     </tr>
                   );
@@ -260,25 +265,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Copy Modal */}
-      {selectedWhale && (
-        <CopyOrderModal
-          open={copyModalOpen}
-          onOpenChange={setCopyModalOpen}
-          whaleAddress={selectedWhale}
-          onPlaceOrder={async (params) => {
-            const stake = BigInt(Math.max(1, Math.floor(params.maxNotionalUSD * params.bankrollPct)));
-            const slippageBps = Math.max(0, Math.round(params.slippageTolerance * 10_000));
-            const result = await copyOrder.mutateAsync({
-              pool: selectedWhale,
-              whaleSide: 'BUY_YES',
-              stake,
-              slippageBps,
-            });
-            return result.hash;
-          }}
-        />
-      )}
     </div>
   );
 }

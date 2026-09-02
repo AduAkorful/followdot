@@ -10,11 +10,18 @@
  *   skillScore = bayesianWinRate × consistencyFactor − variancePenalty
  *
  * where:
- *   - bayesianWinRate = (wins + 1) / (totalMarkets + 2)   [Laplace smoothing, α=1]
+ *   - bayesianWinRate = (wins + 1) / (totalMarkets + 2)   [Laplace smoothing, α=5]
  *   - consistencyFactor = fraction of market-type buckets where winRate ≥ 0.5
  *   - variancePenalty = min(cv(realizedPnL), 0.5)   [coefficient of variation, capped]
  *     If mean PnL ≈ 0 with non-zero variance, penalty = max (pure noise).
+ *
+ * Phase 2 extensions (see plans/followdot-phase2-spec.md):
+ *   - fair-value.ts: Black-Scholes Phi(d2) edge-at-entry computation (F7)
+ *   - calibration.ts: probability calibration scoring (F8)
  */
+
+export * from "./fair-value";
+export * from "./calibration";
 
 export interface MarketResult {
   marketId: string;

@@ -3,19 +3,35 @@
 > wrangler deploy --dry-run
 
 
- ⛅️ wrangler 3.114.17 (update available 4.127.1)
-------------------------------------------------
+ ⛅️ wrangler 3.114.17
+---------------------
 
-[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mThe version of Wrangler you are using is now out-of-date.[0m
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mFailed to write to log file Error: EROFS: read-only file system, open '/home/aduakorful/.config/.wrangler/logs/wrangler-2026-09-02_16-08-02_715.log'[0m
 
-  Please update to the latest version to prevent critical errors.
-  Run `npm install --save-dev wrangler@4` to update to the latest version.
-  After installation, run Wrangler with `npx wrangler`.
+      at async open (node:internal/fs/promises:639:25)
+      at async writeFile (node:internal/fs/promises:1222:14)
+      at async /home/aduakorful/dev/followdot/node_modules/.pnpm/wrangler@3.114.17_@cloudflare+workers-types@4.20260702.1_bufferutil@4.1.0_utf-8-validate@5.0.10/node_modules/wrangler/wrangler-dist/cli.js:83518:7
+      at async Mutex.runWith (/home/aduakorful/dev/followdot/node_modules/.pnpm/miniflare@3.20250718.3_bufferutil@4.1.0_utf-8-validate@5.0.10/node_modules/miniflare/dist/src/index.js:2504:16)
+      at async appendToDebugLogFile (/home/aduakorful/dev/followdot/node_modules/.pnpm/wrangler@3.114.17_@cloudflare+workers-types@4.20260702.1_bufferutil@4.1.0_utf-8-validate@5.0.10/node_modules/wrangler/wrangler-dist/cli.js:83515:3) {
+    errno: -30,
+    code: 'EROFS',
+    syscall: 'open',
+    path: '/home/aduakorful/.config/.wrangler/logs/wrangler-2026-09-02_16-08-02_715.log'
+  }
 
 
-Total Upload: 1344.44 KiB / gzip: 275.25 KiB
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mWould have written: [0m
+
+  --- 2026-09-02T16:08:02.996Z debug
+  🪵  Writing logs to "/home/aduakorful/.config/.wrangler/logs/wrangler-2026-09-02_16-08-02_715.log"
+  ---
+  
+
+
+Total Upload: 1389.76 KiB / gzip: 284.31 KiB
 Your worker has access to the following bindings:
 - KV Namespaces:
   - WHALE_KV: followdot-whales
   - SESSION_KEYS_KV: followdot-session-keys
 --dry-run: exiting now.
+🪵  Logs were written to "/home/aduakorful/.config/.wrangler/logs/wrangler-2026-09-02_16-08-02_715.log"

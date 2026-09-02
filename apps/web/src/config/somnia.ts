@@ -10,6 +10,6 @@ import type { Chain } from "viem";
 export const somniaChain: Chain = somniaShannon;
 
 export const INDEXER_URL =
-  process.env.NEXT_PUBLIC_DREAMDEX_REST ?? "https://stg.api.dreamdex.io/v0";
+  process.env.NEXT_PUBLIC_DREAMDEX_REST as string;
 
 export default somniaChain;

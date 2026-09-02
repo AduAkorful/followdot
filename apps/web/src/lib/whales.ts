@@ -3,7 +3,13 @@
  * computes per-market PnL, and scores each wallet using the real
  * @followdot/skill-score package.
  */
-import { computeSkillScore, type MarketResult, type SkillScoreResult } from "@followdot/skill-score";
+import {
+  computeSkillScore,
+  buildCalibrationBuckets,
+  computeCalibrationScore,
+  type MarketResult,
+  type SkillScoreResult,
+} from "@followdot/skill-score";
 import {
   fetchRecentFills,
   extractTopTraders,
@@ -24,6 +30,8 @@ export interface WhaleLeaderboardEntry {
   variancePenalty: number;
   totalMarkets: number;
   totalRealizedPnL: number;
+  calibrationScore: number | null;
+  calibrationSampleSize: number;
   lastUpdated: number;
 }
 
@@ -80,6 +88,27 @@ export async function fetchWhaleLeaderboard(
         settledMarkets: marketResults,
       });
 
+      const calibrationFills = traderFills.flatMap((fill) => {
+        const market = marketMap.get(fill.market.toLowerCase());
+        const fillSide = fill.takerSide ?? fill.takerOrder?.side;
+        if (!market || market.winningOutcome === null || market.voided || !fillSide || !fill.fillPrice) {
+          return [];
+        }
+        if (!Number.isInteger(market.quoteDecimals) || !market.asset || !market.interval) return [];
+        const scale = 10 ** market.quoteDecimals;
+        const yesProbability = Number(fill.fillPrice) / scale;
+        const isNoSide = fillSide === "BUY_NO" || fillSide === "SELL_YES";
+        return [{
+          fillPrice: isNoSide ? 1 - yesProbability : yesProbability,
+          won: isNoSide ? market.winningOutcome === 1 : market.winningOutcome === 0,
+          marketType: `${market.asset}_${market.interval}`,
+        }];
+      });
+      const calibrationBuckets = buildCalibrationBuckets(calibrationFills);
+      const calibrationScore = Array.isArray(calibrationBuckets) && calibrationBuckets.length > 0
+        ? computeCalibrationScore(calibrationBuckets)
+        : null;
+
       entries.push({
         address: score.address,
         score: score.score,
@@ -89,6 +118,8 @@ export async function fetchWhaleLeaderboard(
         variancePenalty: score.variancePenalty,
         totalMarkets: score.totalMarkets,
         totalRealizedPnL: score.totalRealizedPnL,
+        calibrationScore,
+        calibrationSampleSize: calibrationFills.length,
         lastUpdated: score.lastUpdated,
       });
     } catch (err) {

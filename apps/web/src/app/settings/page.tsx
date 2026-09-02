@@ -10,19 +10,17 @@ import Link from 'next/link';
 export default function SettingsPage() {
   const { isConnected } = useAccount();
 
-  const [bankrollCap, setBankrollCap] = useState(1000);
+  const [bankrollCap, setBankrollCap] = useState<number | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionKeyAddress, setSessionKeyAddress] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [rules, setRules] = useState<AutoCopyRule[]>([]);
   const [editingRule, setEditingRule] = useState<AutoCopyRule | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
 
   const handleGrantSessionKey = () => {
-    // Generate session key delegation
-    const fakeKey = '0x' + Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-    setSessionKeyAddress(fakeKey);
-    setSessionActive(true);
+    setSessionError('Session-key delegation is unavailable until the configured worker authorization endpoint is live.');
   };
 
   const handleRevokeSessionKey = () => {
@@ -92,7 +90,7 @@ export default function SettingsPage() {
                 <div>
                   <div className="text-xs text-[var(--text-muted)]">Session Expiration</div>
                   <div className="font-mono text-sm text-[var(--text-primary)] mt-1">
-                    In 29 days (2026-09-30 18:00 UTC)
+                    {sessionError ?? 'Expiration unavailable'}
                   </div>
                 </div>
               </div>
@@ -116,6 +114,7 @@ export default function SettingsPage() {
                 <Key className="w-4 h-4 mr-2" />
                 Authorize DreamDEX Session Key
               </button>
+              {sessionError && <p className="text-xs text-[var(--red)]">{sessionError}</p>}
             </div>
           )}
         </div>
@@ -131,8 +130,8 @@ export default function SettingsPage() {
           <div className="flex items-center gap-4 max-w-md">
             <input
               type="number"
-              value={bankrollCap}
-              onChange={(e) => setBankrollCap(Number(e.target.value))}
+              value={bankrollCap ?? ''}
+              onChange={(e) => setBankrollCap(e.target.value === '' ? null : Number(e.target.value))}
               min={50}
               max={100000}
               step={50}
@@ -141,7 +140,9 @@ export default function SettingsPage() {
             <span className="text-sm font-semibold text-[var(--accent)] font-mono">USDC</span>
           </div>
           <p className="text-xs text-[var(--text-muted)] mt-2">
-            Auto-copy bot will halt trading if total open copied exposure reaches ${bankrollCap.toFixed(2)} USDC.
+            {bankrollCap === null
+              ? 'Set a cap before enabling auto-copy.'
+              : `Auto-copy bot will halt trading if total open copied exposure reaches $${bankrollCap.toFixed(2)} USDC.`}
           </p>
         </div>
       </div>

@@ -11,6 +11,11 @@ export interface AutoCopyRule {
   maxStake: number;
   slippageCap: number;
   status: 'ACTIVE' | 'PAUSED';
+  autoRoll: boolean;
+  cashOutTarget: number;
+  stopLossRounds: number;
+  maxRounds: number;
+  dailyCap: number;
 }
 
 interface EditRuleModalProps {
@@ -49,6 +54,11 @@ function EditRuleForm({
   const [maxStake, setMaxStake] = useState(rule.maxStake);
   const [slippageCap, setSlippageCap] = useState(rule.slippageCap);
   const [status, setStatus] = useState<'ACTIVE' | 'PAUSED'>(rule.status);
+  const [autoRoll, setAutoRoll] = useState(rule.autoRoll);
+  const [cashOutTarget, setCashOutTarget] = useState(rule.cashOutTarget);
+  const [stopLossRounds, setStopLossRounds] = useState(rule.stopLossRounds);
+  const [maxRounds, setMaxRounds] = useState(rule.maxRounds);
+  const [dailyCap, setDailyCap] = useState(rule.dailyCap);
 
   const handleSave = () => {
     onSaveRule({
@@ -56,6 +66,11 @@ function EditRuleForm({
       maxStake,
       slippageCap,
       status,
+      autoRoll,
+      cashOutTarget,
+      stopLossRounds,
+      maxRounds,
+      dailyCap,
     });
     onCancel();
   };
@@ -81,6 +96,32 @@ function EditRuleForm({
             className="mt-1 bg-[var(--bg-input)] border-[var(--border)]"
           />
         </div>
+
+        <div className="flex items-center justify-between">
+          <Label htmlFor="auto-roll" className="text-xs text-[var(--text-secondary)]">Auto-roll winning positions</Label>
+          <input id="auto-roll" type="checkbox" checked={autoRoll} onChange={(e) => setAutoRoll(e.target.checked)} />
+        </div>
+
+        {autoRoll && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-[var(--text-secondary)]">Cash-out target (%)</Label>
+              <Input type="number" min={100} value={cashOutTarget} onChange={(e) => setCashOutTarget(Number(e.target.value))} />
+            </div>
+            <div>
+              <Label className="text-xs text-[var(--text-secondary)]">Stop-loss rounds</Label>
+              <Input type="number" min={1} value={stopLossRounds} onChange={(e) => setStopLossRounds(Number(e.target.value))} />
+            </div>
+            <div>
+              <Label className="text-xs text-[var(--text-secondary)]">Maximum rounds</Label>
+              <Input type="number" min={1} value={maxRounds} onChange={(e) => setMaxRounds(Number(e.target.value))} />
+            </div>
+            <div>
+              <Label className="text-xs text-[var(--text-secondary)]">Daily cap (USDC)</Label>
+              <Input type="number" min={0} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
+            </div>
+          </div>
+        )}
 
         <div>
           <Label className="text-xs text-[var(--text-secondary)]">Slippage Cap (%)</Label>

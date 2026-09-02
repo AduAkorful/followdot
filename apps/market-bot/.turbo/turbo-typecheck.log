@@ -1,0 +1,4 @@
+
+> @followdot/market-bot@0.1.0 typecheck /home/aduakorful/dev/followdot/apps/market-bot
+> tsc --noEmit
+

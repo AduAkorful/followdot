@@ -1,0 +1,4 @@
+
+> @followdot/indexer@0.1.0 typecheck /home/aduakorful/dev/followdot/apps/indexer
+> tsc --noEmit
+

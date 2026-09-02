@@ -3,24 +3,35 @@
 > next build
 
 ▲ Next.js 16.3.3 (Turbopack)
-✓ Running next.config.ts took 56ms
+- Environments: .env.local
+✓ Running next.config.ts took 220ms
 
   Creating an optimized production build ...
-✓ Compiled successfully in 5.2s
-  Finished TypeScript in 13.2s    ✓ Finished TypeScript in 13.2s 
-  Collecting page data using 3 workers in 872ms    ✓ Collecting page data using 3 workers in 872ms 
-✓ Generating static pages using 3 workers (7/7) in 1082ms
-  Finalizing page optimization in 9ms    ✓ Finalizing page optimization in 9ms 
-
-Route (app)
-┌ ○ /
-├ ○ /_not-found
-├ ○ /claim
-├ ○ /performance
-├ ○ /settings
-└ ƒ /whale/[address]
+Turbopack build encountered 2 warnings:
+[next]/internal/font/google/geist_a71539c9.module.css
+Warning: Error while requesting resource
+There was an issue establishing a connection while requesting https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap
 
 
-○  (Static)   prerendered as static content
-ƒ  (Dynamic)  server-rendered on demand
+[next]/internal/font/google/geist_mono_8d43a2aa.module.css
+Warning: Error while requesting resource
+There was an issue establishing a connection while requesting https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap
 
+
+
+> Build error occurred
+Error: Turbopack build failed with 2 errors:
+[next]/internal/font/google/geist_a71539c9.module.css
+Error: next/font: error:
+Failed to fetch Geist from Google Fonts.
+If you are offline or behind a proxy, self-host the font with next/font/local, or set HTTP_PROXY/HTTPS_PROXY so Next.js can reach fonts.googleapis.com.
+
+
+[next]/internal/font/google/geist_mono_8d43a2aa.module.css
+Error: next/font: error:
+Failed to fetch Geist Mono from Google Fonts.
+If you are offline or behind a proxy, self-host the font with next/font/local, or set HTTP_PROXY/HTTPS_PROXY so Next.js can reach fonts.googleapis.com.
+
+
+    at ignore-listed frames
+ ELIFECYCLE  Command failed with exit code 1.

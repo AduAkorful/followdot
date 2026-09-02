@@ -3,19 +3,22 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PrivyProvider } from '@privy-io/react-auth';
 import { WagmiProvider, createConfig } from '@privy-io/wagmi';
-import { http, fallback } from 'wagmi';
+import { http } from 'wagmi';
 import { somniaChain } from '@/config/somnia';
 import { ReactNode, useState } from 'react';
 
-const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || 'cmthpl5os01710cl7qi2x0s3u';
+function requirePublicEnv(value: string | undefined, name: string): string {
+  if (!value?.trim()) throw new Error(`${name} is not configured`);
+  return value;
+}
+
+const privyAppId = requirePublicEnv(process.env.NEXT_PUBLIC_PRIVY_APP_ID, 'NEXT_PUBLIC_PRIVY_APP_ID');
+const rpcUrl = requirePublicEnv(process.env.NEXT_PUBLIC_RPC_URL, 'NEXT_PUBLIC_RPC_URL');
 
 const wagmiConfig = createConfig({
   chains: [somniaChain],
   transports: {
-    [somniaChain.id]: fallback([
-      http(),
-      http(somniaChain.rpcUrls.default.http[0]),
-    ]),
+    [somniaChain.id]: http(rpcUrl),
   },
 });
 

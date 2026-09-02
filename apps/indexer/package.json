@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "wrangler": "^3.70.0",
