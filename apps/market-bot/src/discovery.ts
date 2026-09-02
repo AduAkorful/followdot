@@ -18,6 +18,13 @@ export interface MarketCandidate {
   params: { tickSize: bigint; minQuantity: bigint; lotSize: bigint };
 }
 
+export class NoMarketAvailableError extends Error {
+  constructor() {
+    super("No live binary market passed the configured safety and liquidity checks");
+    this.name = "NoMarketAvailableError";
+  }
+}
+
 function booksForSide(book: BinaryOrderBook, side: BotConfig["strategySide"]): { bids: BookLevel[]; asks: BookLevel[] } {
   return side === "BUY_YES"
     ? { bids: book.yesBids, asks: book.yesAsks }
@@ -38,12 +45,14 @@ export async function discoverMarket(
   sdk: SomniaMarkets,
   config: BotConfig,
   nowSec = Math.floor(Date.now() / 1000),
+  excludedMarketIds: ReadonlySet<string> = new Set(),
 ): Promise<MarketCandidate> {
   const markets = await sdk.client.listLiveBinaryMarkets({ status: "Trading", limit: 100 });
   const candidates: MarketCandidate[] = [];
   const minLiquidityByDecimals = new Map<number, bigint>();
 
   for (const market of markets) {
+    if (excludedMarketIds.has(market.marketId)) continue;
     if (Number(market.expiry) <= nowSec + config.minExpirySeconds) continue;
     if (config.asset && market.asset.toUpperCase() !== config.asset) continue;
     if (config.intervalSeconds !== undefined && Number(market.intervalSec ?? "0") !== config.intervalSeconds) continue;
@@ -79,7 +88,7 @@ export async function discoverMarket(
 
   candidates.sort((a, b) => Number(a.market.expiry) - Number(b.market.expiry) || a.market.marketId.localeCompare(b.market.marketId));
   const selected = candidates[0];
-  if (!selected) throw new Error("No live binary market passed the configured safety and liquidity checks");
+  if (!selected) throw new NoMarketAvailableError();
   return selected;
 }
 

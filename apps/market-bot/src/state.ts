@@ -50,7 +50,13 @@ export async function loadState(path: string): Promise<BotState> {
         ? parsed.executedMarketIds.filter((value): value is string => typeof value === "string")
         : [],
     };
-    if (state.dayKey !== dayKey()) return emptyState();
+    if (state.dayKey !== dayKey()) {
+      return {
+        ...state,
+        dayKey: dayKey(),
+        dailyVolumeRaw: "0",
+      };
+    }
     return state;
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return emptyState();

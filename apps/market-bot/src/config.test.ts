@@ -44,7 +44,18 @@ describe("market bot configuration", () => {
 
   it("does not silently enable continuous trading", () => {
     expect(() => loadConfig({ ...baseEnv, RUN_ONCE: "false" })).toThrow(
-      "Only RUN_ONCE=true is currently supported",
+      "Set exactly one of RUN_ONCE=true or CONTINUOUS=true",
+    );
+  });
+
+  it("enables continuous mode only with an explicit mode pair", () => {
+    const config = loadConfig({ ...baseEnv, RUN_ONCE: "false", CONTINUOUS: "true" });
+    expect(config.continuous).toBe(true);
+  });
+
+  it("does not run a continuous loop in read-only mode", () => {
+    expect(() => loadConfig({ ...baseEnv, RUN_ONCE: "false", CONTINUOUS: "true", CHECK_ONLY: "true" })).toThrow(
+      "CHECK_ONLY cannot be combined with CONTINUOUS",
     );
   });
 });

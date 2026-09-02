@@ -20,6 +20,7 @@ export interface BotConfig {
   pollIntervalMs: number;
   fillTimeoutMs: number;
   checkOnly: boolean;
+  continuous: boolean;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -73,8 +74,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
   const interval = env.INTERVAL_SECONDS?.trim();
   const minLiquidity = env.MIN_LIQUIDITY_USDC?.trim();
   const checkOnly = booleanValue(env.CHECK_ONLY, "CHECK_ONLY", false);
-  const runOnce = booleanValue(env.RUN_ONCE, "RUN_ONCE", true);
-  if (!runOnce) throw new Error("Only RUN_ONCE=true is currently supported");
+  const continuous = booleanValue(env.CONTINUOUS, "CONTINUOUS", false);
+  const runOnce = booleanValue(env.RUN_ONCE, "RUN_ONCE", !continuous);
+  if (continuous === runOnce) {
+    throw new Error("Set exactly one of RUN_ONCE=true or CONTINUOUS=true");
+  }
+  if (checkOnly && continuous) {
+    throw new Error("CHECK_ONLY cannot be combined with CONTINUOUS");
+  }
   const configuredKey = env.PRIVATE_KEY?.trim();
   if (!configuredKey && !checkOnly) required(env, "PRIVATE_KEY");
 
@@ -94,6 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
     pollIntervalMs: positiveInteger(required(env, "POLL_INTERVAL_MS"), "POLL_INTERVAL_MS"),
     fillTimeoutMs: positiveInteger(required(env, "FILL_TIMEOUT_MS"), "FILL_TIMEOUT_MS"),
     checkOnly,
+    continuous,
   };
 }
 

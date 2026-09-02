@@ -4,10 +4,12 @@ import { privateKeyToAccount } from "viem/accounts";
 import { parseUnits } from "viem";
 import { loadConfig } from "./config.js";
 import { discoverMarket } from "./discovery.js";
+import { NoMarketAvailableError } from "./discovery.js";
 import { waitForIndexedFill } from "./execution.js";
 import { loadState, saveState } from "./state.js";
 import { assertDailyLimit, buildOrderPlan } from "./strategy.js";
 import { logEvent } from "./telemetry.js";
+import { sleep } from "./util.js";
 
 async function runOnce(): Promise<void> {
   const config = loadConfig();
@@ -16,9 +18,9 @@ async function runOnce(): Promise<void> {
     indexerUrl: config.restUrl,
     wsRpcUrl: config.wsUrl,
   });
-  const candidate = await discoverMarket(readSdk, config);
 
   if (config.checkOnly) {
+    const candidate = await discoverMarket(readSdk, config);
     logEvent("market_selected", {
       marketId: candidate.market.marketId,
       pool: candidate.onchain.pool,
@@ -40,6 +42,12 @@ async function runOnce(): Promise<void> {
   if (state.inFlight) {
     throw new Error(`An execution is already in flight for ${state.inFlight.marketId}; inspect ${config.stateFile} before retrying`);
   }
+  const candidate = await discoverMarket(
+    readSdk,
+    config,
+    Math.floor(Date.now() / 1000),
+    new Set(state.executedMarketIds),
+  );
   if (state.executedMarketIds.includes(candidate.market.marketId)) {
     throw new Error(`Market ${candidate.market.marketId} was already executed; refusing a duplicate one-shot order`);
   }
@@ -111,7 +119,7 @@ async function runOnce(): Promise<void> {
     );
     state.dailyVolumeRaw = (BigInt(state.dailyVolumeRaw) + BigInt(indexed.fill.quoteQuantity)).toString();
     state.executions = [...state.executions.slice(-99), indexed.fill.txHash];
-    state.executedMarketIds = [...state.executedMarketIds.slice(-99), candidate.market.marketId];
+    state.executedMarketIds = [...state.executedMarketIds, candidate.market.marketId];
     state.inFlight = null;
     await saveState(config.stateFile, state);
     logEvent("fill_indexed", {
@@ -131,11 +139,36 @@ async function runOnce(): Promise<void> {
   }
 }
 
+async function run(): Promise<void> {
+  const config = loadConfig();
+  if (!config.continuous) {
+    await runOnce();
+    return;
+  }
+
+  logEvent("continuous_mode_started", { intervalMs: config.pollIntervalMs });
+  while (true) {
+    try {
+      await runOnce();
+    } catch (error) {
+      logEvent("continuous_cycle_failed", {
+        retrying: true,
+        error: error instanceof Error ? error.message : String(error),
+        unavailableMarket: error instanceof NoMarketAvailableError,
+      });
+      if (error instanceof Error && error.message.includes("execution is already in flight")) {
+        throw error;
+      }
+    }
+    await sleep(config.pollIntervalMs);
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runOnce().catch((error: unknown) => {
+  run().catch((error: unknown) => {
     logEvent("bot_failed", { error: error instanceof Error ? error.message : String(error) });
     process.exitCode = 1;
   });
 }
 
-export { runOnce };
+export { run, runOnce };

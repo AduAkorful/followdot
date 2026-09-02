@@ -1,0 +1,45 @@
+services:
+  - type: worker
+    name: followdot-market-bot
+    runtime: node
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @followdot/market-bot build
+    startCommand: pnpm --filter @followdot/market-bot start
+    envVars:
+      - key: DREAMDEX_REST_URL
+        sync: false
+      - key: DREAMDEX_WS_URL
+        sync: false
+      - key: PRIVATE_KEY
+        sync: false
+      - key: CHECK_ONLY
+        sync: false
+      - key: RUN_ONCE
+        sync: false
+      - key: CONTINUOUS
+        sync: false
+      - key: MAX_ORDER_USDC
+        sync: false
+      - key: MAX_DAILY_USDC
+        sync: false
+      - key: MIN_EXPIRY_SECONDS
+        sync: false
+      - key: STRATEGY_SIDE
+        sync: false
+      - key: MAX_SPREAD_BPS
+        sync: false
+      - key: POLL_INTERVAL_MS
+        sync: false
+      - key: FILL_TIMEOUT_MS
+        sync: false
+      - key: BOT_STATE_FILE
+        value: /var/lib/followdot-market-bot/state.json
+      - key: ASSET
+        sync: false
+      - key: INTERVAL_SECONDS
+        sync: false
+      - key: MIN_LIQUIDITY_USDC
+        sync: false
+    disk:
+      name: followdot-market-bot-state
+      mountPath: /var/lib/followdot-market-bot
+      sizeGB: 1
