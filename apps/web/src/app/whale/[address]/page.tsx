@@ -8,7 +8,7 @@ import { EquityCurve } from '@/components/equity-curve';
 import { EdgeAnalysisScatter } from '@/components/edge-analysis-scatter';
 import { ArrowLeft, Loader2, AlertCircle, Copy, Check, Play } from 'lucide-react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import type { BinarySide } from '@somnia-chain/markets-sdk';
 
 function shortenAddress(addr: string): string {
@@ -33,8 +33,14 @@ function formatEdge(bps: number | null): string {
 
 export default function WhaleProfile() {
   const params = useParams<{ address: string }>();
+  const searchParams = useSearchParams();
   const address = params?.address ?? '';
   const { data, isLoading, isError, error } = useWhaleProfile(address);
+
+  const rankFromQuery = Number(searchParams?.get('rank') ?? '');
+  const totalFromQuery = Number(searchParams?.get('total') ?? '');
+  const liveRank = Number.isInteger(rankFromQuery) && rankFromQuery > 0 ? rankFromQuery : null;
+  const liveTotal = Number.isInteger(totalFromQuery) && totalFromQuery > 0 ? totalFromQuery : null;
 
   const [copyOpen, setCopyOpen] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<{
@@ -123,6 +129,11 @@ export default function WhaleProfile() {
   const s = data.score;
   const winRatePct = Math.round(s.winRate * 100);
   const scorePct = Math.round(s.score * 100);
+  const totalWhales = liveTotal ?? 0;
+  const rankPercentile = totalWhales > 0 && liveRank !== null
+    ? Math.round((1 - liveRank / totalWhales) * 100)
+    : s.score >= 0.95 ? 95 : s.score >= 0.90 ? 90 : 75;
+  const rankBadge = rankPercentile >= 95 ? 'Top 5%' : rankPercentile >= 90 ? 'Top 10%' : 'Top 25%';
   const isPositivePnL = s.totalRealizedPnL >= 0;
   const sortedFills = [...(data.fills ?? [])].sort(
     (a, b) => Number(b.timestamp) - Number(a.timestamp),
@@ -152,6 +163,11 @@ export default function WhaleProfile() {
             <div className="profile-address">{s.address}</div>
             <div className="profile-meta">
               {scorePct}% Skill Score · {winRatePct}% Win Rate across {s.totalMarkets} settled markets
+              {totalWhales > 0 ? (
+                <span className="badge badge-outline text-xs ml-2">
+                  {rankBadge}
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -167,9 +183,13 @@ export default function WhaleProfile() {
           </button>
 
           <button
-              onClick={() => handleCopyClick(firstCopyPosition?.pool ?? '', firstCopyPosition?.marketId ?? '', firstCopyPosition?.side ?? 'BUY_YES')}
+            onClick={() => {
+              if (!firstCopyPosition) return;
+              handleCopyClick(firstCopyPosition.pool, firstCopyPosition.marketId, firstCopyPosition.side);
+            }}
             disabled={!firstCopyPosition}
-            className="btn btn-accent disabled:opacity-40"
+            className="btn btn-accent disabled:opacity-40 disabled:cursor-not-allowed"
+            title={firstCopyPosition ? 'Copy first open position' : 'No open positions to copy'}
           >
             <Copy className="w-4 h-4 mr-1" />
             1-Click Copy
@@ -202,7 +222,7 @@ export default function WhaleProfile() {
           <div className="stat-label">Bayesian Skill Score</div>
           <div className="stat-row">
             <div className="stat-value text-[var(--accent)]">{scorePct}%</div>
-            <span className="stat-trend up">Top 5%</span>
+            <span className="stat-trend up">{rankBadge}</span>
           </div>
           <div className="score-bar mt-3">
             <div className="score-bar-fill" style={{ width: `${scorePct}%` }} />

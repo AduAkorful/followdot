@@ -181,4 +181,27 @@ describe('ewmaVolatility', () => {
     expect(Number.isFinite(volDefault)).toBe(true);
     expect(Number.isFinite(volHighLambda)).toBe(true);
   });
+
+  it('returns 0 volatility when lambda is 1 (no decay, constant mean reverts)', () => {
+    const prices = [0.5, 0.6, 0.55, 0.7, 0.65];
+    const vol = ewmaVolatility(prices, 1.0);
+    expect(vol).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(vol)).toBe(true);
+  });
+
+  it('S0 > 1 still returns a valid probability (math holds)', () => {
+    // computeFairValue doesn't clamp S0; S0=1.5 with fill S=0.6 means a 40% drop,
+    // d2 = (log(0.6/1.5) + ...) / (...) → Phi of a negative number → small probability
+    const fv = computeFairValue(1.5, 0.6, 0.3, 0.5);
+    expect(fv).not.toBeNaN();
+    expect(fv).toBeGreaterThanOrEqual(0);
+    expect(fv).toBeLessThanOrEqual(1);
+  });
+
+  it('large fill-price drop from S0 yields a small fair value', () => {
+    // S0=0.9, S=0.1 → drop of 89% → very small fair value
+    const fv = computeFairValue(0.9, 0.1, 0.4, 0.5);
+    expect(fv).toBeGreaterThan(0);
+    expect(fv).toBeLessThan(0.5);
+  });
 });

@@ -186,4 +186,104 @@ describe("routeCopyOrders", () => {
     expect(result.processed).toHaveLength(1);
     expect(kv.writes).toEqual(writesBefore);
   });
+
+  it("handles empty whale fills gracefully (no activity tick)", async () => {
+    const kv = new FakeKV();
+    const rule = makeRule();
+    await kv.put(`follower:${rule.walletAddress}:${rule.whaleAddress}`, JSON.stringify({
+      ...rule,
+      dailyVolume: rule.dailyVolume.toString(),
+      guardrails: { ...rule.guardrails, dailyCap: rule.guardrails.dailyCap.toString() },
+    }));
+    const emptySdk = {
+      client: {
+        async getUserFills() { return []; },
+        async getBinaryMarket() { return null; },
+        async getMarketOnchain() { return null; },
+        async getClaimable() { return []; },
+        async getErc20Balance() { return 0n; },
+        async listLiveBinaryMarkets() { return []; },
+        createTrader() { return { async placeOrder() {}, async redeemMany() {} }; },
+      },
+    };
+    const { counts } = makeSdk();
+
+    const result = await routeCopyOrders(emptySdk as never, kv as never, {
+      followerAddresses: [],
+      dryRun: false,
+    });
+
+    expect(result.processed).toEqual([]);
+    expect(result.errors).toEqual([]);
+    expect(result.rolled).toEqual([]);
+    expect(counts()).toEqual({ placements: 0, redemptions: 0 });
+  });
+
+  it("reports errors when SDK throws during whale fill fetch", async () => {
+    const kv = new FakeKV();
+    const rule = makeRule();
+    await kv.put(`follower:${rule.walletAddress}:${rule.whaleAddress}`, JSON.stringify({
+      ...rule,
+      dailyVolume: rule.dailyVolume.toString(),
+      guardrails: { ...rule.guardrails, dailyCap: rule.guardrails.dailyCap.toString() },
+    }));
+    const failingSdk = {
+      client: {
+        async getUserFills() { throw new Error("RPC timeout"); },
+        async getBinaryMarket() { return null; },
+        async getMarketOnchain() { return null; },
+        async getClaimable() { return []; },
+        async getErc20Balance() { return 0n; },
+        async listLiveBinaryMarkets() { return []; },
+        createTrader() { return { async placeOrder() {}, async redeemMany() {} }; },
+      },
+    };
+
+    const result = await routeCopyOrders(failingSdk as never, kv as never, {
+      followerAddresses: [],
+      dryRun: false,
+    });
+
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]).toContain("RPC timeout");
+  });
+
+  it("filters to a specific follower address when followerAddresses is set", async () => {
+    const kv = new FakeKV();
+    const rule = makeRule();
+    await kv.put(`follower:${rule.walletAddress}:${rule.whaleAddress}`, JSON.stringify({
+      ...rule,
+      dailyVolume: rule.dailyVolume.toString(),
+      guardrails: { ...rule.guardrails, dailyCap: rule.guardrails.dailyCap.toString() },
+    }));
+    const { sdk, counts } = makeSdk();
+
+    const result = await routeCopyOrders(sdk as never, kv as never, {
+      followerAddresses: ["0x1111111111111111111111111111111111111111"],
+      dryRun: false,
+    });
+
+    expect(result.processed).toHaveLength(1);
+    expect(result.errors).toEqual([]);
+    expect(counts().placements).toBe(2);
+  });
+
+  it("skips followers not in the followerAddresses filter", async () => {
+    const kv = new FakeKV();
+    const rule = makeRule();
+    await kv.put(`follower:${rule.walletAddress}:${rule.whaleAddress}`, JSON.stringify({
+      ...rule,
+      dailyVolume: rule.dailyVolume.toString(),
+      guardrails: { ...rule.guardrails, dailyCap: rule.guardrails.dailyCap.toString() },
+    }));
+    const { sdk, counts } = makeSdk();
+
+    const result = await routeCopyOrders(sdk as never, kv as never, {
+      followerAddresses: ["0x9999999999999999999999999999999999999999"],
+      dryRun: false,
+    });
+
+    expect(result.processed).toEqual([]);
+    expect(counts()).toEqual({ placements: 0, redemptions: 0 });
+  });
 });

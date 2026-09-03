@@ -194,7 +194,7 @@ export default function Home() {
                       </td>
                       <td>
                         <Link
-                          href={`/whale/${whale.address}`}
+                          href={`/whale/${whale.address}?rank=${globalRank}&total=${whales.length}`}
                           className="flex items-center gap-3 hover:text-[var(--accent)] transition-colors"
                         >
                           <div className="profile-avatar !w-8 !h-8 !text-xs">

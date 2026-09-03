@@ -6,10 +6,10 @@
 
  RUN  v2.1.9 /home/aduakorful/dev/followdot/apps/web
 
- ✓ src/lib/whales.test.ts (5 tests) 9ms
+ ✓ src/lib/whales.test.ts (5 tests) 28ms
 
  Test Files  1 passed (1)
       Tests  5 passed (5)
-   Start at  11:17:34
-   Duration  6.45s (transform 562ms, setup 516ms, collect 804ms, tests 9ms, environment 3.67s, prepare 421ms)
+   Start at  19:48:46
+   Duration  11.21s (transform 606ms, setup 523ms, collect 1.68s, tests 28ms, environment 6.27s, prepare 1.02s)
 

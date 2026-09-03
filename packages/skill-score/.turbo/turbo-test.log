@@ -5,12 +5,12 @@
 
  RUN  v2.1.9 /home/aduakorful/dev/followdot/packages/skill-score
 
- ✓ src/fair-value.test.ts (30 tests) 24ms
- ✓ src/calibration.test.ts (13 tests) 144ms
- ✓ src/index.test.ts (14 tests) 129ms
+ ✓ src/fair-value.test.ts (33 tests) 114ms
+ ✓ src/calibration.test.ts (13 tests) 74ms
+ ✓ src/index.test.ts (18 tests) 40ms
 
  Test Files  3 passed (3)
-      Tests  57 passed (57)
-   Start at  11:31:05
-   Duration  4.00s (transform 2.74s, setup 0ms, collect 4.19s, tests 298ms, environment 40ms, prepare 2.40s)
+      Tests  64 passed (64)
+   Start at  19:48:47
+   Duration  4.28s (transform 1.74s, setup 0ms, collect 2.31s, tests 228ms, environment 8ms, prepare 3.27s)
 

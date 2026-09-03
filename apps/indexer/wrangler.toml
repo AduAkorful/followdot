@@ -16,10 +16,8 @@ crons = ["*/1 * * * *"]  # every minute
 
 [[kv_namespaces]]
 binding = "WHALE_KV"
-id = "followdot-whales"
-preview_id = "followdot-whales-preview"
+id = "9241642f427746ed87ef8c1129e52490"
 
 [[kv_namespaces]]
 binding = "SKILL_KV"
-id = "followdot-skill"
-preview_id = "followdot-skill-preview"
+id = "b8506d739d414533844034cc2e3a96ad"

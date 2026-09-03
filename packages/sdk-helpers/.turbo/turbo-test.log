@@ -6,20 +6,23 @@
 
  RUN  v1.6.1 /home/aduakorful/dev/followdot/packages/sdk-helpers
 
- ✓ src/roll-state.test.ts  (30 tests) 165ms
-stderr | src/index.test.ts > routeCopyOrders > does not consume guardrail budget when a fill is blocked
+ ✓ src/roll-state.test.ts  (30 tests) 63ms
 stdout | src/index.test.ts > routeCopyOrders > redeems a winner and rolls once while nonce-guarding retries
-[sdk-helpers] Guardrails prevent new position for 0x1111111111111111111111111111111111111111, skipping fill 0xtx-1:fill-1
 [sdk-helpers] Routed copy order for 0x1111111111111111111111111111111111111111 on 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
- ✓ src/index.test.ts  (3 tests) 85ms
+stdout | src/index.test.ts > routeCopyOrders > filters to a specific follower address when followerAddresses is set
+stderr | src/index.test.ts > routeCopyOrders > does not consume guardrail budget when a fill is blocked
+[sdk-helpers] Routed copy order for 0x1111111111111111111111111111111111111111 on 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+[sdk-helpers] Guardrails prevent new position for 0x1111111111111111111111111111111111111111, skipping fill 0xtx-1:fill-1
+ ✓ src/index.test.ts  (7 tests) 33ms
 
 stderr | src/index.test.ts > routeCopyOrders > does not persist stop-loss handling during a dry run
 [sdk-helpers] Stop-loss (3 consecutive losses) hit for 0x1111111111111111111111111111111111111111
 
 
  Test Files  2 passed (2)
-      Tests  33 passed (33)
-   Start at  11:31:14
-   Duration  8.92s (transform 2.30s, setup 5ms, collect 6.58s, tests 250ms, environment 12ms, prepare 1.88s)
+      Tests  37 passed (37)
+   Start at  19:48:48
+   Duration  6.51s (transform 1.89s, setup 0ms, collect 3.94s, tests 96ms, environment 16ms, prepare 1.95s)
 

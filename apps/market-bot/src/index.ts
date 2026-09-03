@@ -1,4 +1,4 @@
-import { SomniaMarkets } from "@somnia-chain/markets-sdk";
+import { SomniaMarkets, SOMNIA_TESTNET_ADDRESSES } from "@somnia-chain/markets-sdk";
 import { somniaShannon } from "@somnia-chain/markets-sdk/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { parseUnits } from "viem";
@@ -17,6 +17,7 @@ async function runOnce(): Promise<void> {
     chain: somniaShannon,
     indexerUrl: config.restUrl,
     wsRpcUrl: config.wsUrl,
+    addresses: SOMNIA_TESTNET_ADDRESSES,
   });
 
   if (config.checkOnly) {
@@ -75,13 +76,13 @@ async function runOnce(): Promise<void> {
       chain: somniaShannon,
       indexerUrl: config.restUrl,
       wsRpcUrl: config.wsUrl,
+      addresses: SOMNIA_TESTNET_ADDRESSES,
       privateKey: config.privateKey,
     });
     await exchange.loadMarkets();
     const tradable = exchange.market(candidate.market.marketId);
-    const outcome = config.strategySide === "BUY_YES" ? "YES" : "NO";
     const order = await exchange.createOrder(
-      `${tradable.symbol}#${outcome}`,
+      tradable.symbol,
       "limit",
       "buy",
       plan.amount,
@@ -147,18 +148,27 @@ async function run(): Promise<void> {
   }
 
   logEvent("continuous_mode_started", { intervalMs: config.pollIntervalMs });
+  let consecutiveFailures = 0;
+  const MAX_BACKOFF_MS = 5 * 60_000; // 5 minutes
   while (true) {
     try {
       await runOnce();
+      consecutiveFailures = 0;
     } catch (error) {
+      consecutiveFailures++;
+      const backoff = Math.min(MAX_BACKOFF_MS, config.pollIntervalMs * 2 ** Math.min(consecutiveFailures, 6));
       logEvent("continuous_cycle_failed", {
         retrying: true,
+        backoffMs: backoff,
+        consecutiveFailures,
         error: error instanceof Error ? error.message : String(error),
         unavailableMarket: error instanceof NoMarketAvailableError,
       });
       if (error instanceof Error && error.message.includes("execution is already in flight")) {
         throw error;
       }
+      await sleep(backoff);
+      continue;
     }
     await sleep(config.pollIntervalMs);
   }

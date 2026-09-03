@@ -108,7 +108,7 @@ export async function fetchRecentFills(
       query RecentFills($limit: Int!) {
         Fill(limit: $limit, order_by: [{timestamp: desc}, {blockNumber: desc}]) {
           id
-          market
+          market { id }
           pool
           fillPrice
           quantity
@@ -126,8 +126,8 @@ export async function fetchRecentFills(
       }
     `;
 
-    const data = await gqlFetch<{ Fill: FillRow[] }>(query, { limit }, signal);
-    return data.Fill ?? [];
+    const data = await gqlFetch<{ Fill: Array<Omit<FillRow, "market"> & { market: { id: string } }> }>(query, { limit }, signal);
+    return (data.Fill ?? []).map((row) => ({ ...row, market: row.market.id }));
   } catch (err) {
     throw new Error(
       `Unable to load recent DreamDEX fills: ${err instanceof Error ? err.message : String(err)}`,

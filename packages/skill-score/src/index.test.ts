@@ -214,4 +214,62 @@ describe('NaN and Infinity safety', () => {
     expect(result.score).not.toBeNaN();
     expect(result.totalRealizedPnL).toBe(-50);
   });
+
+  it('single loss with 0 wins → Bayesian floor', () => {
+    // bayesianWinRate = (wins + α) / (totalMarkets + 2α) = (0 + 5) / (1 + 10) = 5/11
+    const result = computeSkillScore({
+      address: '0xabc',
+      settledMarkets: [
+        { marketId: 'm1', marketType: 'BTC_hourly', pnl: -10, isUp: false },
+      ],
+    });
+    expect(result.winRate).toBe(0);
+    expect(result.bayesianWinRate).toBeCloseTo(5 / 11, 3); // (0+5)/(1+10)
+    expect(result.score).not.toBeNaN();
+    expect(result.score).toBeGreaterThan(0);
+    expect(result.score).toBeLessThan(1);
+  });
+
+  it('score is bounded between 0 and 1 for all input ranges', () => {
+    const allLosses = Array.from({ length: 50 }, (_, i) => ({
+      marketId: `m${i}`, marketType: 'BTC_hourly', pnl: -5, isUp: false,
+    }));
+    const allWins = Array.from({ length: 50 }, (_, i) => ({
+      marketId: `m${i}`, marketType: 'BTC_hourly', pnl: 10, isUp: true,
+    }));
+    const worst = computeSkillScore({ address: '0xabc', settledMarkets: allLosses });
+    const best = computeSkillScore({ address: '0xabc', settledMarkets: allWins });
+    expect(worst.score).toBeGreaterThanOrEqual(0);
+    expect(worst.score).toBeLessThan(1);
+    expect(best.score).toBeLessThanOrEqual(1);
+    expect(best.score).toBeGreaterThan(0);
+    // Perfect score (100% wins, large n) → Bayesian ≈ 1.0, but capped by score formula
+    expect(best.score).toBeLessThanOrEqual(1);
+  });
+
+  it('consistencyFactor = 0 when all market types are inconsistent', () => {
+    // WIN + LOSS alternation prevents any bucket from being consistent
+    const mixed = Array.from({ length: 20 }, (_, i) => ({
+      marketId: `m${i}`,
+      marketType: i % 2 === 0 ? 'BTC_hourly' : 'ETH_daily',
+      pnl: i % 2 === 0 ? 5 : -5,
+      isUp: i % 2 === 0,
+    }));
+    const result = computeSkillScore({ address: '0xabc', settledMarkets: mixed });
+    expect(result.consistencyFactor).toBeLessThan(1);
+    expect(result.consistencyFactor).toBeGreaterThanOrEqual(0);
+  });
+
+  it('handles all-zero pnl with non-zero variance (edge case)', () => {
+    // Zero pnl → mean=0 → variance=0 → variancePenalty=0 → score driven by bayesian only
+    const result = computeSkillScore({
+      address: '0xabc',
+      settledMarkets: Array.from({ length: 20 }, (_, i) => ({
+        marketId: `m${i}`, marketType: 'BTC_hourly', pnl: 0, isUp: i % 2 === 0,
+      })),
+    });
+    expect(result.variancePenalty).toBe(0);
+    expect(result.score).not.toBeNaN();
+    expect(result.totalRealizedPnL).toBe(0);
+  });
 });

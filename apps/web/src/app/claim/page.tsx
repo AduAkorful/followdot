@@ -15,7 +15,9 @@ export default function ClaimPage() {
 
   const totalClaimableCount = positions.length;
 
-  const totalEstPayout = positions.reduce((acc, p) => acc + Number(p.estPayout) / 1e6, 0);
+  const totalEstPayout = positions.reduce((acc, p) => {
+    return acc + Number(p.estPayout) / 1e6;
+  }, 0);
 
   const formatAmount = (amt: bigint) => {
     const num = Number(amt) / 1e6;

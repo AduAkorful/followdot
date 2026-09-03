@@ -1,0 +1,16 @@
+
+> @followdot/market-bot@0.1.0 test /home/aduakorful/dev/followdot/apps/market-bot
+> vitest run
+
+
+ RUN  v2.1.9 /home/aduakorful/dev/followdot/apps/market-bot
+
+ ✓ src/state.test.ts (4 tests) 27ms
+ ✓ src/config.test.ts (15 tests) 129ms
+ ✓ src/strategy.test.ts (2 tests) 8ms
+
+ Test Files  3 passed (3)
+      Tests  21 passed (21)
+   Start at  19:48:47
+   Duration  4.50s (transform 830ms, setup 0ms, collect 1.70s, tests 163ms, environment 23ms, prepare 2.26s)
+

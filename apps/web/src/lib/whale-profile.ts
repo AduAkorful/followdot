@@ -54,6 +54,10 @@ export interface EdgeAtEntry {
 
 export interface WhaleProfileData {
   address: string;
+  /** Position in the leaderboard (1 = top). Optional: derived from URL params at the page level. */
+  rank?: number;
+  /** Total whales in the leaderboard. Optional: derived from URL params at the page level. */
+  totalWhales?: number;
   score: SkillScoreResult;
   marketPnL: WhaleMarketPnL[];
   fills: FillRow[];

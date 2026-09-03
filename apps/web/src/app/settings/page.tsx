@@ -19,8 +19,22 @@ export default function SettingsPage() {
   const [editingRule, setEditingRule] = useState<AutoCopyRule | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
 
-  const handleGrantSessionKey = () => {
-    setSessionError('Session-key delegation is unavailable until the configured worker authorization endpoint is live.');
+  const [sessionGranting, setSessionGranting] = useState(false);
+
+  const handleGrantSessionKey = async () => {
+    setSessionGranting(true);
+    setSessionError(null);
+    try {
+      const res = await fetch('/api/auth-session-key', { method: 'POST' });
+      if (!res.ok) throw new Error('Authorization endpoint not available');
+      const data = await res.json();
+      setSessionActive(true);
+      setSessionKeyAddress(data.address);
+    } catch {
+      setSessionError('Session-key authorization is temporarily unavailable. Try again later.');
+    } finally {
+      setSessionGranting(false);
+    }
   };
 
   const handleRevokeSessionKey = () => {
@@ -110,9 +124,9 @@ export default function SettingsPage() {
               <p className="text-sm text-[var(--text-secondary)]">
                 Authorize an ephemeral session key so Followdot can automatically mirror whale trades in real-time when you are offline.
               </p>
-              <button onClick={handleGrantSessionKey} className="btn btn-accent">
+              <button onClick={handleGrantSessionKey} disabled={sessionGranting} className="btn btn-accent disabled:opacity-40">
                 <Key className="w-4 h-4 mr-2" />
-                Authorize DreamDEX Session Key
+                {sessionGranting ? 'Authorizing…' : 'Authorize DreamDEX Session Key'}
               </button>
               {sessionError && <p className="text-xs text-[var(--red)]">{sessionError}</p>}
             </div>

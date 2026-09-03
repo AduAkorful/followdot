@@ -21,6 +21,7 @@ type KVNamespace = {
 
 import {
   SomniaMarkets,
+  SOMNIA_TESTNET_ADDRESSES,
   type SomniaMarketsClient,
   type BinaryMarket,
   type BinarySide,
@@ -94,6 +95,7 @@ export function createDreamDexSDK(config: FollowdotSDKConfig = {}): SomniaMarket
     chain: somniaShannon,
     indexerUrl: restUrl,
     wsRpcUrl: wsUrl,
+    addresses: SOMNIA_TESTNET_ADDRESSES,
   });
 
   return _client;
@@ -158,7 +160,7 @@ export async function fetchRecentFills(
     query RecentFills($limit: Int!) {
       Fill(limit: $limit, order_by: [{timestamp: desc}, {blockNumber: desc}]) {
         id
-        market
+        market { id }
         pool
         fillPrice
         quantity
@@ -176,8 +178,8 @@ export async function fetchRecentFills(
     }
   `;
 
-  const data = await gqlFetch<{ Fill: FillRow[] }>(query, { limit });
-  return data.Fill;
+  const data = await gqlFetch<{ Fill: Array<Omit<FillRow, "market"> & { market: { id: string } }> }>(query, { limit });
+  return data.Fill.map((row) => ({ ...row, market: row.market.id }));
 }
 
 /**
@@ -298,6 +300,7 @@ export async function placeCopyOrder(
     chain: somniaShannon,
     indexerUrl: requireEndpoint(config.restUrl, "DreamDEX REST URL"),
     wsRpcUrl: requireEndpoint(config.wsUrl, "DreamDEX WS URL"),
+    addresses: SOMNIA_TESTNET_ADDRESSES,
     ...(config.privateKey
       ? { privateKey: config.privateKey as `0x${string}` }
       : config.walletClient
