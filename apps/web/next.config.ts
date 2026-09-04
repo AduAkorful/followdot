@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const nextConfig: NextConfig = {
+  // Monorepo: locate the workspace's `next` package from the repo root so
+  // Turbopack can resolve it from the web app's source tree.
+  turbopack: {
+    root: path.resolve(__dirname, "../.."),
+  },
   async headers() {
     return [
       {
