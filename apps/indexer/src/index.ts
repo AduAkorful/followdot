@@ -1,4 +1,9 @@
-import { createDreamDexSDK, computeSkillScores, persistToKV, fetchRecentFills, extractTopTraders } from '@followdot/sdk-helpers';
+import {
+  createDreamDexSDK,
+  computeSkillScores,
+  fetchRecentFills,
+  extractTopTraders,
+} from "@followdot/sdk-helpers";
 
 interface Env {
   WHALE_KV: KVNamespace;
@@ -10,30 +15,32 @@ interface Env {
 }
 
 const WHALE_LEADERBOARD_LIMIT = 20;
+// The web app computes the whale leaderboard live from the indexer
+// GraphQL (see apps/web/src/lib/whales.ts) — it does NOT consume the
+// indexer worker's KV output. The cron below is therefore a no-op
+// discovery pass that only refreshes the WHALE_KV directory when a
+// new top-trader address is observed. We don't write skill scores to
+// KV from this worker; the next cron tick simply re-discovers whales.
 
-async function runIndex(env: Env): Promise<void> {
+async function runDiscovery(env: Env): Promise<{ newWhales: number }> {
   const sdk = createDreamDexSDK({
     restUrl: env.DREAMDEX_REST_URL,
     wsUrl: env.DREAMDEX_WS_URL,
   });
 
-  try {
-    // Discover top traders from recent fills via the indexer
-    const fills = await fetchRecentFills(WHALE_LEADERBOARD_LIMIT * 25);
-    const topTraders = extractTopTraders(fills, WHALE_LEADERBOARD_LIMIT);
+  const fills = await fetchRecentFills(100);
+  const topTraders = extractTopTraders(fills, WHALE_LEADERBOARD_LIMIT);
 
-    // Store discovered whale addresses in WHALE_KV
-    for (const addr of topTraders) {
+  let newWhales = 0;
+  for (const addr of topTraders) {
+    const existing = await env.WHALE_KV.get(`whale:${addr}`);
+    if (!existing) {
       await env.WHALE_KV.put(`whale:${addr}`, addr);
+      newWhales += 1;
     }
-
-    // Compute and persist skill scores for all stored whales
-    const results = await computeSkillScores(sdk, env.WHALE_KV, env.SKILL_KV);
-    await persistToKV(env.SKILL_KV, results);
-  } catch (err) {
-    console.error('[indexer] indexing failed:', err);
-    throw err;
   }
+
+  return { newWhales };
 }
 
 export default {
@@ -42,32 +49,38 @@ export default {
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<void> {
-    await runIndex(env);
+    try {
+      const { newWhales } = await runDiscovery(env);
+      console.log(`[indexer] discovery ok — ${newWhales} new whales`);
+    } catch (err) {
+      console.error("[indexer] discovery failed:", err);
+      throw err;
+    }
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === '/health') {
-      // Unauthenticated liveness check — returns 200 if the worker is up.
-      // For production, restrict to internal IPs or a health-check token.
-      return new Response('ok', { status: 200 });
+    if (url.pathname === "/health") {
+      return new Response("ok", { status: 200 });
     }
 
-    // All other routes require a valid API token
-    const token = request.headers.get('x-api-token');
+    const token = request.headers.get("x-api-token");
     if (!env.API_TOKEN) {
-      return new Response('Authorization is not configured', { status: 503 });
+      return new Response("Authorization is not configured", { status: 503 });
     }
     if (token !== env.API_TOKEN) {
-      return new Response('Unauthorized', { status: 401 });
+      return new Response("Unauthorized", { status: 401 });
     }
 
-    if (url.pathname === '/index') {
-      await runIndex(env);
-      return new Response('indexed', { status: 200 });
+    if (url.pathname === "/index") {
+      const { newWhales } = await runDiscovery(env);
+      return new Response(JSON.stringify({ newWhales }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    return new Response('Not found', { status: 404 });
+    return new Response("Not found", { status: 404 });
   },
 };

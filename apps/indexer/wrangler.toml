@@ -12,7 +12,7 @@ compatibility_date = "2026-08-27"
 
 [triggers]
 # Run the indexed sweep on a schedule
-crons = ["*/1 * * * *"]  # every minute
+crons = ["*/30 * * * *"]  # every 30 min — discovers new top-trader addresses
 
 [[kv_namespaces]]
 binding = "WHALE_KV"

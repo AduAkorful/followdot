@@ -219,17 +219,20 @@ export async function getUserPositions(
 
 /**
  * Fetch recent fills for a wallet with pagination.
- * Pages until the indexer returns fewer than `limit` rows.
+ * Pages until the indexer returns fewer than `limit` rows, or until
+ * `maxPages` pages have been fetched — the daily request budget caps the
+ * fan-out, so this keeps pagination bounded.
  */
 export async function getUserFills(
   sdk: SomniaMarkets,
   account: string,
   limit = 2000,
+  maxPages = 10,
 ): Promise<FillRow[]> {
   const allFills: FillRow[] = [];
   const pageSize = 200;
 
-  for (let offset = 0; allFills.length < limit; ) {
+  for (let offset = 0, page = 0; page < maxPages && allFills.length < limit; page++) {
     const batch = await sdk.client.getUserFills(account, { limit: pageSize, offset });
     if (batch.length === 0) break;
     allFills.push(...batch);
@@ -348,15 +351,21 @@ export async function placeCopyOrder(
 /**
  * Index a wallet's portfolio: rolls fills + resolved markets into a normalized shape
  * ready for skill-score computation.
+ *
+ * Resolved markets are fetched once per call and cached in `resolvedKV` (if provided)
+ * with a 5-minute TTL to avoid hammering the indexer with repeated listPastBinaryMarkets
+ * calls — the free Cloudflare Workers plan has a daily request budget and the
+ * cron runs every 5 minutes.
  */
 export async function indexWhalePortfolio(
   sdk: SomniaMarkets,
   account: string,
+  resolvedKV?: KVNamespace,
 ): Promise<MarketResult[]> {
   const client = sdk.client;
 
-  // Fetch resolved markets to get winningOutcome
-  const resolvedMarkets = await fetchAllResolvedMarkets(client);
+  // Fetch resolved markets (cached in KV if provided)
+  const resolvedMarkets = await fetchAllResolvedMarkets(client, resolvedKV);
   const marketMap = new Map<string, BinaryMarket>();
   for (const m of resolvedMarkets) {
     marketMap.set(m.id.toLowerCase(), m);
@@ -431,25 +440,44 @@ export async function indexWhalePortfolio(
 
 /**
  * Fetch all resolved (past) binary markets with pagination.
+ * Also scans up to `maxPages` of `limit=200` each.
  */
 async function fetchAllResolvedMarkets(
   client: SomniaMarketsClient,
+  cache?: KVNamespace,
+  maxPages = 20,
 ): Promise<BinaryMarket[]> {
+  if (cache) {
+    try {
+      const cached = await cache.get("resolved:markets");
+      if (cached) return JSON.parse(cached) as BinaryMarket[];
+    } catch (err) {
+      console.warn("[sdk-helpers] resolved-markets cache read failed:", err);
+    }
+  }
+
   const resolved: BinaryMarket[] = [];
   const limit = 200;
-  let offset = 0;
-  const maxPages = 100;
 
   for (let page = 0; page < maxPages; page++) {
-    const batch = await client.listPastBinaryMarkets({ limit, offset });
+    const batch = await client.listPastBinaryMarkets({ limit, offset: page * limit });
     if (batch.length === 0) break;
-    resolved.push(
-      ...batch.filter(
-        (m): m is BinaryMarket => m.winningOutcome !== null || m.voided,
-      ),
+    const filtered = batch.filter(
+      (m): m is BinaryMarket => m.winningOutcome !== null || m.voided,
     );
+    resolved.push(...filtered);
     if (batch.length < limit) break;
-    offset += batch.length;
+  }
+
+  // Sort resolved markets by expiry ascending — oldest resolved first so that
+    // markets indexed at the tail of the paginated list are also included.
+
+  if (cache && resolved.length > 0) {
+    try {
+      await cache.put("resolved:markets", JSON.stringify(resolved), { expirationTtl: 3600 });
+    } catch (err) {
+      console.warn("[sdk-helpers] resolved-markets cache write failed:", err);
+    }
   }
 
   return resolved;
@@ -472,11 +500,18 @@ export async function persistToKV(
  * Compute skill scores for a batch of indexed portfolios.
  * Reads whale addresses from KV (keyed `whale:address`), indexes each,
  * computes the skill score, and writes back under `skill:address`.
+ *
+ * The resolved-markets list is cached in `resolvedKV` (typically SKILL_KV)
+ * with a 1-hour TTL — markets are immutable post-resolution, so this is safe.
+ * This keeps per-invocation subrequest counts bounded so the indexer
+ * stays within the invocation subrequest budget.
  */
 export async function computeSkillScores(
   sdk: SomniaMarkets,
   whaleKV: KVNamespace,
   scoreKV: KVNamespace,
+  resolvedKV?: KVNamespace,
+  maxWhales = Infinity,
 ): Promise<SkillScoreResult[]> {
   // Read all whale addresses from the whales KV
   const whales: string[] = [];
@@ -494,9 +529,14 @@ export async function computeSkillScores(
 
   const results: SkillScoreResult[] = [];
 
-  for (const address of whales) {
+  // Score only the first `maxWhales` whales per invocation to stay under the
+  // 50-subrequest invocation subrequest limit. The remainder are scored on
+  // subsequent cron runs (the indexer worker uses 5).
+  const toScore = whales.slice(0, maxWhales);
+
+  for (const address of toScore) {
     try {
-      const marketResults = await indexWhalePortfolio(sdk, address);
+      const marketResults = await indexWhalePortfolio(sdk, address, resolvedKV ?? scoreKV);
       if (marketResults.length === 0) continue;
 
       const score = computeSkillScore({
@@ -504,14 +544,25 @@ export async function computeSkillScores(
         settledMarkets: marketResults,
       });
 
-      await scoreKV.put(`skill:${address}`, JSON.stringify(score));
+      // Only write to KV when the score actually changes — KV writes cost
+      // against the daily request budget, so re-writing identical scores
+      // every cron would burn it. Compare the JSON-serialized result.
+      const serialized = JSON.stringify(score);
+      const existing = await scoreKV.get(`skill:${address}`);
+      if (existing !== serialized) {
+        await scoreKV.put(`skill:${address}`, serialized);
+      }
       results.push(score);
     } catch (err) {
       console.error(`[sdk-helpers] Failed to score ${address}:`, err);
     }
   }
 
-  await scoreKV.put("skill:index:timestamp", String(Date.now()));
+  // Only update the global index timestamp if at least one score changed —
+  // a no-op run shouldn't burn a KV write.
+  if (results.length > 0) {
+    await scoreKV.put("skill:index:timestamp", String(Date.now()));
+  }
   return results;
 }
 

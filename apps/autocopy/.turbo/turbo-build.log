@@ -13,9 +13,9 @@
   After installation, run Wrangler with `npx wrangler`.
 
 
-Total Upload: 1389.76 KiB / gzip: 284.31 KiB
+Total Upload: 1391.03 KiB / gzip: 285.04 KiB
 Your worker has access to the following bindings:
 - KV Namespaces:
-  - WHALE_KV: followdot-whales
-  - SESSION_KEYS_KV: followdot-session-keys
+  - WHALE_KV: 9241642f427746ed87ef8c1129e52490
+  - SESSION_KEYS_KV: a5d1a02f8cdd4551bbe9a6cb564973a4
 --dry-run: exiting now.
