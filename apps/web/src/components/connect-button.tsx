@@ -1,7 +1,7 @@
 'use client';
 
 import { usePrivy } from '@privy-io/react-auth';
-import { useAccount, useSwitchChain } from 'wagmi';
+import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
 import { somniaChain } from '@/config/somnia';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,8 +20,10 @@ import { useState } from 'react';
 export function ConnectButton() {
   const { login, logout, authenticated } = usePrivy();
   const { isConnected, address, chain } = useAccount();
+  const { disconnectAsync } = useDisconnect();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
   const [copied, setCopied] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
 
   const shortenAddress = (addr: string) =>
     `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -37,6 +39,23 @@ export function ConnectButton() {
         .catch((err) => {
           console.error('Failed to copy address:', err);
         });
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (isDisconnecting) return;
+    setIsDisconnecting(true);
+    try {
+      // Privy session and wagmi connector are independent; clear both or the
+      // button stays in the "connected" branch via isConnected/address.
+      await Promise.allSettled([
+        logout(),
+        isConnected ? disconnectAsync() : Promise.resolve(),
+      ]);
+    } catch (err) {
+      console.error('Failed to disconnect wallet:', err);
+    } finally {
+      setIsDisconnecting(false);
     }
   };
 
@@ -103,11 +122,14 @@ export function ConnectButton() {
           {copied ? 'Copied!' : 'Copy address'}
         </DropdownMenuItem>
         <DropdownMenuItem
-          onClick={() => logout()}
+          onClick={() => {
+            void handleDisconnect();
+          }}
+          disabled={isDisconnecting}
           className="text-destructive cursor-pointer"
         >
           <LogOut className="mr-2 h-4 w-4" />
-          Disconnect
+          {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

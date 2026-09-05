@@ -104,9 +104,15 @@ export async function fetchRecentFills(
   signal?: AbortSignal,
 ): Promise<FillRow[]> {
   try {
+    // BINARY only — global Fill feed is dominated by SPOT volume, which
+    // never intersects resolved event markets and empties the leaderboard.
     const query = `
-      query RecentFills($limit: Int!) {
-        Fill(limit: $limit, order_by: [{timestamp: desc}, {blockNumber: desc}]) {
+      query RecentBinaryFills($limit: Int!) {
+        Fill(
+          where: { market: { marketType: { _eq: "BINARY" } } },
+          limit: $limit,
+          order_by: [{timestamp: desc}, {blockNumber: desc}]
+        ) {
           id
           market { id }
           pool
@@ -183,9 +189,14 @@ export async function fetchTraderFills(
     // a slow `takerOrder.owner` join (Hasura times out for any wallet
     // that has been a taker). Filter only on maker/taker.
     const q = `
-      query UserFillsDirect($acct: String!, $limit: Int!, $offset: Int!) {
+      query UserBinaryFillsDirect($acct: String!, $limit: Int!, $offset: Int!) {
         Fill(
-          where: { _or: [{ maker: { _eq: $acct } }, { taker: { _eq: $acct } }] },
+          where: {
+            _and: [
+              { market: { marketType: { _eq: "BINARY" } } },
+              { _or: [{ maker: { _eq: $acct } }, { taker: { _eq: $acct } }] }
+            ]
+          },
           limit: $limit, offset: $offset,
           order_by: [{ timestamp: desc }, { blockNumber: desc }]
         ) {
@@ -203,8 +214,13 @@ export async function fetchTraderFills(
         signal,
       }).then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const d = (await r.json()) as { data?: { Fill?: FillRow[] } };
-        return d.data?.Fill ?? [];
+        const d = (await r.json()) as {
+          data?: { Fill?: Array<Omit<FillRow, "market"> & { market: { id: string } | string }> };
+        };
+        return (d.data?.Fill ?? []).map((row) => ({
+          ...row,
+          market: typeof row.market === "string" ? row.market : row.market.id,
+        }));
       }),
       FETCH_TIMEOUT_MS,
       `getUserFills(${account})`,
