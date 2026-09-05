@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { ConnectButton } from '@/components/connect-button';
 import { EditRuleModal, AutoCopyRule } from '@/components/edit-rule-modal';
+import { NO_WHALES_FOLLOWED_YET, loadFollowRules } from '@/lib/follow-rules';
 import { Key, Shield, Pause, Play, Edit3 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -33,7 +34,7 @@ export default function SettingsPage() {
   const [workerNote, setWorkerNote] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
-  const [rules, setRules] = useState<AutoCopyRule[]>([]);
+  const [rules, setRules] = useState<AutoCopyRule[]>(() => loadFollowRules());
   const [editingRule, setEditingRule] = useState<AutoCopyRule | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
 
@@ -74,12 +75,14 @@ export default function SettingsPage() {
   useEffect(() => {
     if (isConnected && address) {
       void refreshSessionStatus();
+      setRules(loadFollowRules(address));
     } else {
       setSessionActive(false);
       setSessionKeyAddress(null);
       setGrantTxHash(null);
       setOnChainGranted(false);
       setWorkerNote(null);
+      setRules(loadFollowRules(null));
     }
   }, [isConnected, address, refreshSessionStatus]);
 
@@ -338,11 +341,11 @@ export default function SettingsPage() {
         <div className="card-body p-0 mt-4 overflow-x-auto">
           {rules.length === 0 ? (
             <div className="text-center py-16 text-[var(--text-muted)]">
-              No active auto-copy rules configured. Visit the{' '}
+              {NO_WHALES_FOLLOWED_YET}. Auto-Follow is not available yet — visit the{' '}
               <Link href="/" className="text-[var(--accent)] underline">
                 Leaderboard
               </Link>{' '}
-              and click &quot;Auto-Follow&quot; on a whale profile to set up auto-mirroring.
+              for live whale profiles (1-Click Copy still works when a position is open).
             </div>
           ) : (
             <table className="data-table">

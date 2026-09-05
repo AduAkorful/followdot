@@ -21,6 +21,7 @@ import {
 import type { Address, Hex } from "viem";
 import { somniaChain, INDEXER_URL } from "../config/somnia";
 import { exposureHumanFromOpenPosition } from "./open-position-display";
+import { withRebuiltCostBasis } from "./rebuild-cost-basis";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_RESOLVED_PAGES = 10; // browser/API budget — ~2k past markets
@@ -555,18 +556,51 @@ const MIN_EXPIRY_HEADROOM_S = 30;
 const MAX_SPREAD_BPS = 100;
 const TRADING_STATUS = 1; // getMarketOnchain: 0 Listed · 1 Trading · 2 Locked · 3 Settling · 4 Resolved · 5 Voided
 
-/** Read current open exposure in human collateral units from the live wallet portfolio. */
-export async function fetchUserExposure(userAddress: string): Promise<number | null> {
+/**
+ * Sum open exposure in human collateral after optional costBasis rebuild from fills.
+ * Prefer reconstructed stake; mark fallback only when fills cannot rebuild.
+ */
+export function sumExposureHumanFromPositions(
+  positions: OpenPositionPnL[],
+  userAddress: string,
+  fills: FillRow[],
+): number {
+  return positions.reduce((total, position) => {
+    const patched = withRebuiltCostBasis(position, userAddress, fills);
+    return total + exposureHumanFromOpenPosition(patched);
+  }, 0);
+}
+
+/**
+ * Read current open exposure in human collateral units from the live wallet portfolio.
+ * When `fills` are omitted, loads trader fills so incomplete SDK costBasis can be rebuilt
+ * before falling back to mark.
+ */
+export async function fetchUserExposure(
+  userAddress: string,
+  fills?: FillRow[],
+): Promise<number | null> {
   try {
     const positions = await withTimeout(
       getClient().getOpenPositionsWithPnL(userAddress),
       FETCH_TIMEOUT_MS,
       `getOpenPositionsWithPnL(${userAddress})`,
     );
-    return positions.reduce(
-      (total, position) => total + exposureHumanFromOpenPosition(position),
-      0,
-    );
+
+    let fillRows = fills;
+    if (fillRows === undefined) {
+      try {
+        fillRows = await fetchTraderFills(userAddress, 500);
+      } catch (err) {
+        console.warn(
+          `[dreamdex] fetchTraderFills for exposure rebuild failed for ${userAddress}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        fillRows = [];
+      }
+    }
+
+    return sumExposureHumanFromPositions(positions, userAddress, fillRows);
   } catch (err) {
     console.warn(
       `[dreamdex] getOpenPositionsWithPnL failed for ${userAddress}:`,

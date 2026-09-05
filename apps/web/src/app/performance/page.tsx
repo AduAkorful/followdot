@@ -14,6 +14,11 @@ import {
   mapHonestOpenPositionMoney,
 } from '@/lib/open-position-display';
 import { withRebuiltCostBasis } from '@/lib/rebuild-cost-basis';
+import {
+  NO_WHALES_FOLLOWED_YET,
+  countMonitoredWhales,
+  loadFollowRules,
+} from '@/lib/follow-rules';
 import { buildEquityCurvePoints } from '@/lib/equity-curve-data';
 import { EquityCurve } from '@/components/equity-curve';
 import { useQuery } from '@tanstack/react-query';
@@ -118,6 +123,10 @@ export default function PerformancePage() {
   );
   const hasUnknownCostBasis = activePositions.some((p) => p.costBasisUnknown);
 
+  // Same source Settings uses — empty until Auto-Follow / KV persistence exists.
+  const followRules = useMemo(() => loadFollowRules(address), [address]);
+  const whalesMonitored = countMonitoredWhales(followRules);
+
   const totalEntries = activePositions.length;
   const paginatedPositions = activePositions.slice(
     (currentPage - 1) * pageSize,
@@ -209,9 +218,15 @@ export default function PerformancePage() {
             <div className="stat-card">
               <div className="stat-label">Whales Monitored</div>
               <div className="stat-row">
-                <div className="stat-value text-[var(--text-secondary)]">—</div>
+                <div className={`stat-value ${whalesMonitored === 0 ? 'text-[var(--text-secondary)]' : ''}`}>
+                  {whalesMonitored}
+                </div>
               </div>
-              <p className="text-xs text-[var(--text-muted)] mt-2">No follow rules loaded</p>
+              <p className="text-xs text-[var(--text-muted)] mt-2">
+                {whalesMonitored === 0
+                  ? NO_WHALES_FOLLOWED_YET
+                  : `${whalesMonitored} auto-copy rule${whalesMonitored === 1 ? '' : 's'}`}
+              </p>
             </div>
           </div>
 
@@ -373,9 +388,6 @@ export default function PerformancePage() {
         open={manageModalOpen}
         onOpenChange={setManageModalOpen}
         position={selectedPosition}
-        onClosePosition={async () => {
-          // Close path not wired to a live sell API yet.
-        }}
       />
     </div>
   );
