@@ -45,3 +45,26 @@ export function resolveFillQuoteDecimals(
   }
   return undefined;
 }
+
+export function formatClaimAmount(
+  raw: bigint | string | number | null | undefined,
+  quoteDecimals: number | null | undefined,
+): string {
+  const value = scaleQuoteAmount(
+    typeof raw === 'bigint' ? raw.toString() : raw,
+    quoteDecimals,
+  );
+  if (value === null) return '—';
+  if (Math.abs(value) >= 1000) return `$${(value / 1000).toFixed(2)}k`;
+  return `$${value.toFixed(2)}`;
+}
+
+export function scaleClaimAmount(
+  raw: bigint | string | number | null | undefined,
+  quoteDecimals: number | null | undefined,
+): number | null {
+  return scaleQuoteAmount(
+    typeof raw === 'bigint' ? raw.toString() : raw,
+    quoteDecimals,
+  );
+}

@@ -124,7 +124,7 @@ export default function SettingsPage() {
               <p className="text-sm text-[var(--text-secondary)]">
                 Authorize an ephemeral session key so Followdot can automatically mirror whale trades in real-time when you are offline.
               </p>
-              <button onClick={handleGrantSessionKey} disabled={sessionGranting} className="btn btn-accent disabled:opacity-40">
+              <button onClick={handleGrantSessionKey} disabled={sessionGranting} className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${sessionGranting ? 'btn-outline' : 'btn-accent'}`}>
                 <Key className="w-4 h-4 mr-2" />
                 {sessionGranting ? 'Authorizing…' : 'Authorize DreamDEX Session Key'}
               </button>

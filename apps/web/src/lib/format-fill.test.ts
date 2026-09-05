@@ -4,6 +4,8 @@ import {
   formatFillQuantity,
   resolveFillQuoteDecimals,
   scaleQuoteAmount,
+  formatClaimAmount,
+  scaleClaimAmount,
 } from './format-fill';
 
 describe('scaleQuoteAmount', () => {
@@ -34,5 +36,18 @@ describe('resolveFillQuoteDecimals', () => {
     expect(resolveFillQuoteDecimals('0xabc', marketPnL)).toBe(6);
     expect(resolveFillQuoteDecimals('0xabc', marketPnL, { '0xabc': 8 })).toBe(8);
     expect(resolveFillQuoteDecimals('0xdef', marketPnL)).toBeUndefined();
+  });
+});
+
+describe('formatClaimAmount / scaleClaimAmount', () => {
+  it('scales claimable raw ints by provided decimals', () => {
+    expect(scaleClaimAmount(1_000_000n, 6)).toBeCloseTo(1, 8);
+    expect(scaleClaimAmount(1_000_000_000_000_000_000n, 18)).toBeCloseTo(1, 8);
+    expect(formatClaimAmount(1_500_000n, 6)).toBe('$1.50');
+  });
+
+  it('never assumes decimals when missing', () => {
+    expect(scaleClaimAmount(1_000_000n, undefined)).toBeNull();
+    expect(formatClaimAmount(1_000_000n, null)).toBe('—');
   });
 });

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { useClaimablePositions, useClaimWinnings } from '@/hooks/use-claim-winnings';
 import { ConnectButton } from '@/components/connect-button';
+import { formatClaimAmount, scaleClaimAmount } from '@/lib/format-fill';
 import { Loader2, AlertCircle, Check, Trophy } from 'lucide-react';
 
 export default function ClaimPage() {
@@ -14,16 +15,13 @@ export default function ClaimPage() {
   const [claimingIndex, setClaimingIndex] = useState<number | null>(null);
 
   const totalClaimableCount = positions.length;
+  const claimAllDisabled = isClaiming || totalClaimableCount === 0;
 
-  const totalEstPayout = positions.reduce((acc, p) => {
-    return acc + Number(p.estPayout) / 1e6;
-  }, 0);
-
-  const formatAmount = (amt: bigint) => {
-    const num = Number(amt) / 1e6;
-    if (Math.abs(num) >= 1000) return `$${(num / 1000).toFixed(2)}k`;
-    return `$${num.toFixed(2)}`;
-  };
+  const totalEstPayout = positions.reduce<number | null>((acc, p) => {
+    const scaled = scaleClaimAmount(p.estPayout, p.quoteDecimals);
+    if (scaled === null) return acc;
+    return (acc ?? 0) + scaled;
+  }, null);
 
   const handleClaimAll = async () => {
     try {
@@ -63,7 +61,9 @@ export default function ClaimPage() {
           Total Unclaimed Payout
         </div>
         <div className="claim-amount">
-          {totalEstPayout > 0 ? `$${totalEstPayout.toFixed(2)}` : '$0.00'}
+          {totalEstPayout === null
+            ? (totalClaimableCount > 0 ? '—' : '$0.00')
+            : `$${totalEstPayout.toFixed(2)}`}
         </div>
         <p className="claim-subtitle">
           {!isConnected
@@ -80,8 +80,10 @@ export default function ClaimPage() {
         {isConnected ? (
           <button
             onClick={handleClaimAll}
-            disabled={isClaiming || totalClaimableCount === 0}
-            className="btn btn-accent-lg mx-auto disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={claimAllDisabled}
+            className={`btn mx-auto disabled:opacity-40 disabled:cursor-not-allowed ${
+              claimAllDisabled ? 'btn-outline' : 'btn-accent-lg'
+            }`}
           >
             {isClaiming ? (
               <>
@@ -142,7 +144,9 @@ export default function ClaimPage() {
           </div>
         ) : (
           <div className="grid-2">
-            {positions.map((pos, idx) => (
+            {positions.map((pos, idx) => {
+              const singleDisabled = isClaiming || claimingIndex === idx;
+              return (
               <div key={`${pos.marketId}-${pos.outcomeIdx}`} className="position-card">
                 <div className="pos-header">
                   <div>
@@ -160,15 +164,17 @@ export default function ClaimPage() {
 
                 <div className="my-3">
                   <div className="text-xs text-[var(--text-muted)]">Estimated Payout</div>
-                  <div className="pos-amount">{formatAmount(pos.estPayout)} USDC</div>
+                  <div className="pos-amount">{formatClaimAmount(pos.estPayout, pos.quoteDecimals)} USDC</div>
                 </div>
 
                 <div className="pos-footer items-center pt-2 border-t border-[var(--border)]">
-                  <span>{formatAmount(pos.amount)} outcome tokens</span>
+                  <span>{formatClaimAmount(pos.amount, pos.quoteDecimals)} outcome tokens</span>
                   <button
                     onClick={() => handleClaimSingle(idx)}
-                    disabled={isClaiming || claimingIndex === idx}
-                    className="btn btn-accent btn-sm disabled:opacity-40"
+                    disabled={singleDisabled}
+                    className={`btn btn-sm disabled:opacity-40 disabled:cursor-not-allowed ${
+                      singleDisabled ? 'btn-outline' : 'btn-accent'
+                    }`}
                   >
                     {claimingIndex === idx ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -178,7 +184,7 @@ export default function ClaimPage() {
                   </button>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         )}
       </div>

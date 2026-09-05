@@ -3,6 +3,7 @@
 import { usePrivy } from '@privy-io/react-auth';
 import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
 import { somniaChain } from '@/config/somnia';
+import { useWalletSession } from '@/hooks/use-wallet-session';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -18,29 +19,20 @@ import { ChevronDown, LogOut, Copy, Check, Wallet, AlertTriangle, RefreshCw } fr
 import { useEffect, useRef, useState } from 'react';
 
 export function ConnectButton() {
-  const { login, logout, authenticated, ready, user } = usePrivy();
-  const { isConnected, address, chain } = useAccount();
+  const { login, logout, authenticated, ready } = usePrivy();
+  const { isConnected, address: wagmiAddress } = useAccount();
+  const { hasWalletSession, address, isWrongNetwork } = useWalletSession();
   const { disconnectAsync } = useDisconnect();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
   const [copied, setCopied] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const hadLiveWallet = useRef(false);
 
-  const privyWallet = user?.wallet?.address;
-  const addressesAligned =
-    !privyWallet ||
-    !address ||
-    privyWallet.toLowerCase() === address.toLowerCase();
-
-  // Real wallet session only — Privy-only / missing address must not look connected.
-  const hasWalletSession =
-    ready && authenticated && isConnected && !!address && addressesAligned;
-
   useEffect(() => {
-    if (isConnected && address) {
+    if (isConnected && wagmiAddress) {
       hadLiveWallet.current = true;
     }
-  }, [isConnected, address]);
+  }, [isConnected, wagmiAddress]);
 
   // If wagmi drops after a live session, clear the leftover Privy session too.
   useEffect(() => {
@@ -97,8 +89,6 @@ export function ConnectButton() {
       </Button>
     );
   }
-
-  const isWrongNetwork = chain?.id !== somniaChain.id;
 
   if (isWrongNetwork) {
     return (
