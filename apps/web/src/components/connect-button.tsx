@@ -15,15 +15,41 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ChevronDown, LogOut, Copy, Check, Wallet, AlertTriangle, RefreshCw } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function ConnectButton() {
-  const { login, logout, authenticated } = usePrivy();
+  const { login, logout, authenticated, ready, user } = usePrivy();
   const { isConnected, address, chain } = useAccount();
   const { disconnectAsync } = useDisconnect();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
   const [copied, setCopied] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const hadLiveWallet = useRef(false);
+
+  const privyWallet = user?.wallet?.address;
+  const addressesAligned =
+    !privyWallet ||
+    !address ||
+    privyWallet.toLowerCase() === address.toLowerCase();
+
+  // Real wallet session only — Privy-only / missing address must not look connected.
+  const hasWalletSession =
+    ready && authenticated && isConnected && !!address && addressesAligned;
+
+  useEffect(() => {
+    if (isConnected && address) {
+      hadLiveWallet.current = true;
+    }
+  }, [isConnected, address]);
+
+  // If wagmi drops after a live session, clear the leftover Privy session too.
+  useEffect(() => {
+    if (!ready || isDisconnecting) return;
+    if (hadLiveWallet.current && authenticated && !isConnected) {
+      hadLiveWallet.current = false;
+      void logout();
+    }
+  }, [ready, authenticated, isConnected, isDisconnecting, logout]);
 
   const shortenAddress = (addr: string) =>
     `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -55,13 +81,12 @@ export function ConnectButton() {
     } catch (err) {
       console.error('Failed to disconnect wallet:', err);
     } finally {
+      hadLiveWallet.current = false;
       setIsDisconnecting(false);
     }
   };
 
-  const isWrongNetwork = isConnected && chain?.id !== somniaChain.id;
-
-  if (!authenticated && !isConnected && !address) {
+  if (!hasWalletSession || !address) {
     return (
       <Button
         onClick={login}
@@ -72,6 +97,8 @@ export function ConnectButton() {
       </Button>
     );
   }
+
+  const isWrongNetwork = chain?.id !== somniaChain.id;
 
   if (isWrongNetwork) {
     return (
@@ -100,10 +127,10 @@ export function ConnectButton() {
       <DropdownMenuTrigger className="flex items-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-full px-3 py-1.5 cursor-pointer text-sm font-medium transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring">
         <Avatar className="h-6 w-6">
           <AvatarFallback className="bg-[var(--accent)] text-black text-[10px] font-bold">
-            {address ? address.slice(2, 4).toUpperCase() : '0X'}
+            {address.slice(2, 4).toUpperCase()}
           </AvatarFallback>
         </Avatar>
-        <span className="text-sm font-mono">{address ? shortenAddress(address) : 'Connected'}</span>
+        <span className="text-sm font-mono">{shortenAddress(address)}</span>
         <ChevronDown className="h-3 w-3 opacity-50" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
@@ -111,7 +138,7 @@ export function ConnectButton() {
           <DropdownMenuLabel>
             <div className="flex flex-col space-y-1">
               <span className="text-xs text-muted-foreground">Connected Wallet</span>
-              <span className="text-sm font-mono font-medium">{address ? shortenAddress(address) : ''}</span>
+              <span className="text-sm font-mono font-medium">{shortenAddress(address)}</span>
               <span className="text-[10px] text-[var(--accent)] font-medium">Somnia Testnet (50312)</span>
             </div>
           </DropdownMenuLabel>
