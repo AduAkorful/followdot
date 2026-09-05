@@ -52,8 +52,20 @@ export async function GET() {
     }
   }
 
-  // Stage 5 — getUserFills (the suspected hang)
-  probes.push(await timed("getUserFills(known-trader, 50)", sdk.client.getUserFills("0x74B4134C8d527a8D8AE8cb9503ab2043bCfC0ffd", { limit: 50, offset: 0 })));
+  // Stage 5 — direct GraphQL (bypasses SDK's slow `participatedAs` filter)
+  probes.push(await timed("direct GraphQL (bot, 50)", (async () => {
+    const r = await fetch(rest, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        query: `query($a:String!){ Fill(where:{_or:[{maker:{_eq:$a}},{taker:{_eq:$a}}]}, limit:50, order_by:[{timestamp:desc}]){ id market { id } maker taker takerSide timestamp } }`,
+        variables: { a: "0x74b4134c8d527a8d8ae8cb9503ab2043bcfc0ffd" },
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = (await r.json()) as { data?: { Fill?: unknown[] } };
+    return d.data?.Fill ?? [];
+  })()));
 
   return NextResponse.json({
     rest,

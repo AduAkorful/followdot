@@ -179,8 +179,33 @@ export async function fetchTraderFills(
 
   for (let offset = 0, page = 0; page < MAX_TRADER_FILL_PAGES; page++) {
     if (signal?.aborted) break;
+    // Direct GraphQL — bypass SDK's `participatedAs` filter that includes
+    // a slow `takerOrder.owner` join (Hasura times out for any wallet
+    // that has been a taker). Filter only on maker/taker.
+    const q = `
+      query UserFillsDirect($acct: String!, $limit: Int!, $offset: Int!) {
+        Fill(
+          where: { _or: [{ maker: { _eq: $acct } }, { taker: { _eq: $acct } }] },
+          limit: $limit, offset: $offset,
+          order_by: [{ timestamp: desc }, { blockNumber: desc }]
+        ) {
+          id market { id } pool maker taker makerSide takerSide
+          fillPrice quantity quoteQuantity timestamp
+          takerOrder { owner side } kind
+        }
+      }
+    `;
     const batch = await withTimeout(
-      getClient().getUserFills(account, { limit: pageSize, offset }),
+      fetch(INDEXER_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: q, variables: { acct: account.toLowerCase(), limit: pageSize, offset } }),
+        signal,
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = (await r.json()) as { data?: { Fill?: FillRow[] } };
+        return d.data?.Fill ?? [];
+      }),
       FETCH_TIMEOUT_MS,
       `getUserFills(${account})`,
     );

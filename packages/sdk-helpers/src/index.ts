@@ -224,16 +224,49 @@ export async function getUserPositions(
  * fan-out, so this keeps pagination bounded.
  */
 export async function getUserFills(
-  sdk: SomniaMarkets,
+  _sdk: SomniaMarkets,
   account: string,
   limit = 2000,
   maxPages = 10,
+  indexerUrl?: string,
 ): Promise<FillRow[]> {
   const allFills: FillRow[] = [];
   const pageSize = 200;
+  const url = indexerUrl ?? "https://dev.smk.somnia.host/v1/graphql";
 
   for (let offset = 0, page = 0; page < maxPages && allFills.length < limit; page++) {
-    const batch = await sdk.client.getUserFills(account, { limit: pageSize, offset });
+    // Direct GraphQL — bypasses SDK's `participatedAs` filter that includes
+    // a slow `takerOrder.owner` join (Hasura times out at ~15s for any
+    // wallet that has been a taker). We only filter maker + taker.
+    const q = `
+      query UserFillsDirect($acct: String!, $limit: Int!, $offset: Int!) {
+        Fill(
+          where: { _or: [{ maker: { _eq: $acct } }, { taker: { _eq: $acct } }] },
+          limit: $limit, offset: $offset,
+          order_by: [{ timestamp: desc }, { blockNumber: desc }]
+        ) {
+          id market { id } pool maker taker makerSide takerSide
+          fillPrice quantity quoteQuantity timestamp
+          takerOrder { owner side } kind
+        }
+      }
+    `;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: q, variables: { acct: (account ?? "").toLowerCase(), limit: pageSize, offset } }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`[sdk-helpers] getUserFills HTTP ${res.status}:`, errBody.slice(0, 200));
+      break;
+    }
+    const d = (await res.json()) as { data?: { Fill?: FillRow[] }; errors?: unknown[] };
+    if (d.errors && d.errors.length > 0) {
+      console.error("[sdk-helpers] getUserFills GraphQL error:", JSON.stringify(d.errors).slice(0, 200));
+    }
+    const batch = d.data?.Fill ?? [];
     if (batch.length === 0) break;
     allFills.push(...batch);
     if (batch.length < pageSize) break;
@@ -589,10 +622,27 @@ export async function pollWhaleFills(
     if (!result.list_complete) break;
   } while (cursor);
 
-  // For each whale, fetch recent fills and store them
+  // For each whale, fetch recent fills and store them.
+  // Direct GraphQL — bypass SDK's slow `participatedAs` `takerOrder.owner` join.
+  const fillsQuery = `
+    query WhaleFills($acct: String!) {
+      Fill(
+        where: { _or: [{ maker: { _eq: $acct } }, { taker: { _eq: $acct } }] },
+        limit: 200, order_by: [{ timestamp: desc }]
+      ) {
+        id market { id } pool maker taker makerSide takerSide
+        fillPrice quantity quoteQuantity timestamp
+      }
+    }
+  `;
   for (const address of whales) {
     try {
-      const fills = await sdk.client.getUserFills(address, { limit: 200 });
+      const r = await fetch("https://dev.smk.somnia.host/v1/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: fillsQuery, variables: { acct: address.toLowerCase() } }),
+      });
+      const fills: FillRow[] = r.ok ? ((await r.json() as { data?: { Fill?: FillRow[] } }).data?.Fill ?? []) : [];
       await fillsKV.put(
         `fills:${address}`,
         JSON.stringify(fills),
@@ -989,14 +1039,33 @@ export async function routeCopyOrders(
     }
   }
 
-  // For each unique whale, fetch recent fills (deduplicated)
+  // For each unique whale, fetch recent fills (deduplicated).
+  // Direct GraphQL — bypass SDK's slow `participatedAs` `takerOrder.owner` join.
+  const indexerUrl = "https://dev.smk.somnia.host/v1/graphql";
+  const fillsQuery = `
+    query WhaleFills($acct: String!) {
+      Fill(
+        where: { _or: [{ maker: { _eq: $acct } }, { taker: { _eq: $acct } }] },
+        limit: 50, order_by: [{ timestamp: desc }]
+      ) {
+        id market { id } pool maker taker makerSide takerSide
+        fillPrice quantity quoteQuantity timestamp
+      }
+    }
+  `;
   const whaleFills = new Map<string, FillRow[]>();
   const whaleErrors = new Map<string, string>();
   for (const { whale } of targetPairs) {
     if (!whaleFills.has(whale)) {
       try {
-        const fills = await sdk.client.getUserFills(whale, { limit: 50 });
-        whaleFills.set(whale, fills);
+        const r = await fetch(indexerUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query: fillsQuery, variables: { acct: whale.toLowerCase() } }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = (await r.json()) as { data?: { Fill?: FillRow[] } };
+        whaleFills.set(whale, d.data?.Fill ?? []);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         whaleErrors.set(whale, message);

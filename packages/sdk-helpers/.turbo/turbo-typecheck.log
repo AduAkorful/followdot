@@ -2,3 +2,7 @@
 > @followdot/sdk-helpers@0.1.0 typecheck /home/aduakorful/dev/followdot/packages/sdk-helpers
 > tsc --noEmit
 
+src/index.ts(227,3): error TS6133: 'sdk' is declared but its value is never read.
+src/index.ts(261,88): error TS2339: Property 'slice' does not exist on type 'Promise<string>'.
+src/index.ts(606,3): error TS6133: 'sdk' is declared but its value is never read.
+ ELIFECYCLE  Command failed with exit code 2.
