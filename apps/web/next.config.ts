@@ -30,13 +30,16 @@ const nextConfig: NextConfig = {
           },
           {
             key: "Content-Security-Policy",
+            // Browser fetches go to the Hasura indexer + Somnia RPC + Privy/WalletConnect.
+            // Keep this in sync with NEXT_PUBLIC_DREAMDEX_REST / RPC / Privy hosts.
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' https://privy.io",
+              "script-src 'self' 'unsafe-inline' https://privy.io https://auth.privy.io",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https:",
-              "connect-src 'self' https://api.dreamdex.io wss://api.infra.testnet.somnia.network",
-              "frame-src 'self'",
+              "font-src 'self' data:",
+              "connect-src 'self' https://dev.smk.somnia.host https://dream-rpc.somnia.network https://auth.privy.io https://privy.io https://api.dreamdex.io wss://api.infra.testnet.somnia.network https://explorer-api.walletconnect.com wss://relay.walletconnect.com wss://relay.walletconnect.org",
+              "frame-src 'self' https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org",
             ].join('; '),
           },
         ],
