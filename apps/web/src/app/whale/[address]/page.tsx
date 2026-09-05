@@ -7,6 +7,7 @@ import { resolveConsistencyDisplay, resolveRankDisplay } from '@/lib/whale-displ
 import { useCopyOrder } from '@/hooks/use-copy-order';
 import { CopyOrderModal } from '@/components/copy-order-modal';
 import { EquityCurve } from '@/components/equity-curve';
+import { buildEquityCurvePoints } from '@/lib/equity-curve-data';
 import { EdgeAnalysisScatter } from '@/components/edge-analysis-scatter';
 import { ArrowLeft, Loader2, AlertCircle, Copy, Check, Play } from 'lucide-react';
 import Link from 'next/link';
@@ -155,20 +156,10 @@ export default function WhaleProfile() {
   const copyOrder = useCopyOrder();
   const [activeTab, setActiveTab] = useState<'fills' | 'edge'>('fills');
 
-  const equityDataPoints = useMemo(() => {
-    if (!data) return [];
-    const sorted = [...data.marketPnL].sort((a, b) => {
-      const aTs = data.fills.find((f) => f.market === a.marketId)?.timestamp ?? '0';
-      const bTs = data.fills.find((f) => f.market === b.marketId)?.timestamp ?? '0';
-      return Number(aTs) - Number(bTs);
-    });
-    let running = 0;
-    return sorted.map((m, idx) => {
-      running += m.pnl;
-      const ts = data.fills.find((f) => f.market === m.marketId)?.timestamp;
-      return { timestamp: ts ? Number(ts) : idx, pnl: running };
-    });
-  }, [data]);
+  const equityDataPoints = useMemo(
+    () => (data ? buildEquityCurvePoints(data.marketPnL, data.fills) : []),
+    [data],
+  );
 
   const handleCopyClick = (pool: string, marketId: string, side: BinarySide) => {
     setSelectedMarket({ pool, marketId, side });

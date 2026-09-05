@@ -13,6 +13,10 @@ import {
   formatSharesHuman,
   mapHonestOpenPositionMoney,
 } from '@/lib/open-position-display';
+import { withRebuiltCostBasis } from '@/lib/rebuild-cost-basis';
+import { buildEquityCurvePoints } from '@/lib/equity-curve-data';
+import { EquityCurve } from '@/components/equity-curve';
+import { useQuery } from '@tanstack/react-query';
 
 interface PositionItem {
   marketId: string;
@@ -47,10 +51,44 @@ export default function PerformancePage() {
   const [selectedPosition, setSelectedPosition] = useState<PositionItem | null>(null);
   const [manageModalOpen, setManageModalOpen] = useState(false);
 
+  // Same indexer path as whale profiles — real settled marketPnL only (no invented points).
+  const equityQuery = useQuery({
+    queryKey: ['wallet-equity', address],
+    queryFn: async () => {
+      if (!address) throw new Error('Wallet not connected');
+      const res = await fetch(`/api/whales/${address}`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Equity history failed (${res.status})`);
+      }
+      const json = (await res.json()) as {
+        profile?: {
+          marketPnL?: Array<{ marketId: string; pnl: number }>;
+          fills?: Array<{ market: string; timestamp?: string }>;
+        };
+      };
+      return json.profile ?? { marketPnL: [], fills: [] };
+    },
+    enabled: hasWalletSession && !!address,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const equityDataPoints = useMemo(
+    () =>
+      buildEquityCurvePoints(
+        equityQuery.data?.marketPnL ?? [],
+        equityQuery.data?.fills ?? [],
+      ),
+    [equityQuery.data],
+  );
+
   const activePositions: PositionItem[] = useMemo(() => {
-    if (!portfolio?.positions?.length) return [];
+    if (!portfolio?.positions?.length || !address) return [];
     return portfolio.positions.flatMap((position) => {
-      const money = mapHonestOpenPositionMoney(position);
+      const money = mapHonestOpenPositionMoney(
+        withRebuiltCostBasis(position, address, portfolio.fills ?? []),
+      );
       if (!money) return [];
       const yesHeld = position.balanceYes > 0n;
       return [{
@@ -70,7 +108,7 @@ export default function PerformancePage() {
         status: 'OPEN' as const,
       }];
     });
-  }, [portfolio]);
+  }, [portfolio, address]);
 
   const fillCount = portfolio?.fills?.length ?? 0;
   const hasAnyActivity = activePositions.length > 0 || fillCount > 0;
@@ -181,16 +219,37 @@ export default function PerformancePage() {
             <div className="card-header flex flex-row items-center justify-between">
               <div>
                 <h3 className="card-title">Portfolio Growth</h3>
-                <p className="card-desc">Cumulative PnL across settled fills (when available)</p>
+                <p className="card-desc">Cumulative settled PnL from indexed market history</p>
               </div>
               <span className="badge badge-outline">
-                {hasAnyActivity ? `${fillCount} fills` : 'No data'}
+                {equityQuery.isLoading
+                  ? 'Loading…'
+                  : equityDataPoints.length > 0
+                    ? `${equityDataPoints.length} settlements`
+                    : fillCount > 0
+                      ? `${fillCount} fills`
+                      : 'No data'}
               </span>
             </div>
-            <div className="card-body mt-2 text-center py-10 text-[var(--text-muted)] text-sm">
-              {hasAnyActivity
-                ? 'Equity curve for copy-attributed fills is not wired yet — open positions and fills below are live.'
-                : 'No copied trades yet. Equity curve appears after live fills are available for this wallet.'}
+            <div className="card-body mt-2">
+              {equityQuery.isError ? (
+                <div className="text-center py-10 text-sm text-[var(--red)]">
+                  {equityQuery.error?.message ?? 'Unable to load equity history'}
+                </div>
+              ) : equityQuery.isLoading ? (
+                <div className="flex items-center justify-center py-10 text-[var(--text-muted)] text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Loading settled PnL history…
+                </div>
+              ) : equityDataPoints.length > 0 ? (
+                <EquityCurve data={equityDataPoints} height={220} chartId="performanceCurve" />
+              ) : (
+                <div className="text-center py-10 text-[var(--text-muted)] text-sm">
+                  {fillCount > 0
+                    ? 'No settled market PnL yet for this wallet — curve appears after resolved markets with attributed fills.'
+                    : 'No copied trades yet. Equity curve appears after settled fills are indexed for this wallet.'}
+                </div>
+              )}
             </div>
           </div>
         </>

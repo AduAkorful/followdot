@@ -31,6 +31,7 @@ import {
 } from "./dreamdex";
 import type { FillRow, BinaryMarket } from "@somnia-chain/markets-sdk";
 import { mapHonestOpenPositionMoney } from "./open-position-display";
+import { withRebuiltCostBasis } from "./rebuild-cost-basis";
 
 export interface WhaleMarketPnL {
   marketId: string;
@@ -120,9 +121,13 @@ function quoteDecimalsByMarketFromMap(
 
 function mapOpenPositions(
   positions: Awaited<ReturnType<typeof fetchTraderOpenPositions>>,
+  account: string,
+  fills: FillRow[],
 ) {
   return positions.flatMap((position) => {
-    const money = mapHonestOpenPositionMoney(position);
+    const money = mapHonestOpenPositionMoney(
+      withRebuiltCostBasis(position, account, fills),
+    );
     if (!money) return [];
     const yesHeld = position.balanceYes > 0n;
     return {
@@ -160,7 +165,7 @@ export async function fetchWhaleProfileCore(
     fetchTraderFills(normalizedAddr, 1000, signal),
     fetchTraderOpenPositions(normalizedAddr),
   ]);
-  const openPositions = mapOpenPositions(rawOpenPositions);
+  const openPositions = mapOpenPositions(rawOpenPositions, normalizedAddr, fills);
 
   const baseMap = buildMarketMap(resolvedMarkets);
   const marketMap = await fetchMarketsForFillIds(
