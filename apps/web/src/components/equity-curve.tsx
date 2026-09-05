@@ -16,13 +16,18 @@ export function EquityCurve({
   height = 200,
   chartId = 'eqGrad',
 }: EquityCurveProps) {
-  // Default flat linear curve if data is empty (0 activity)
-  const defaultData: EquityDataPoint[] = [
-    { timestamp: 0, pnl: 0 },
-    { timestamp: 1, pnl: 0 },
-  ];
+  if (data.length === 0) {
+    return (
+      <div
+        className="flex items-center justify-center text-sm text-[var(--text-muted)] text-center"
+        style={{ height: `${height}px` }}
+      >
+        No settled PnL yet — equity curve appears after resolved markets.
+      </div>
+    );
+  }
 
-  const chartData = data.length > 0 ? data : defaultData;
+  const chartData = data;
   const pnlValues = chartData.map((d) => d.pnl);
   const minPnl = Math.min(0, ...pnlValues);
   const maxPnl = Math.max(0, ...pnlValues);

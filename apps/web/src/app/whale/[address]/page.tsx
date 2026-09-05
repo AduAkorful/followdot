@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useWhaleProfile, useWhaleProfileAnalytics } from '@/hooks/use-whale-profile';
 import { mergeWhaleProfile } from '@/lib/whale-profile';
+import { resolveConsistencyDisplay, resolveRankDisplay } from '@/lib/whale-display';
 import { useCopyOrder } from '@/hooks/use-copy-order';
 import { CopyOrderModal } from '@/components/copy-order-modal';
 import { EquityCurve } from '@/components/equity-curve';
@@ -11,6 +12,11 @@ import { ArrowLeft, Loader2, AlertCircle, Copy, Check, Play } from 'lucide-react
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import type { BinarySide } from '@somnia-chain/markets-sdk';
+import {
+  formatFillPrice,
+  formatFillQuantity,
+  resolveFillQuoteDecimals,
+} from '@/lib/format-fill';
 
 function shortenAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -32,15 +38,102 @@ function formatEdge(bps: number | null): string {
   return `${sign}${bps.toFixed(0)} bps`;
 }
 
+function AnalyticsGate({
+  loading,
+  error,
+  onRetry,
+  children,
+}: {
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  children: ReactNode;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
+        <Loader2 className="h-5 w-5 animate-spin mr-2" />
+        Loading analytics…
+      </div>
+    );
+  }
+  if (error) {
+    const timedOut = /504|timeout|timed out/i.test(error.message);
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-3 px-4 text-center">
+        <div className="flex items-center justify-center text-[var(--red)]">
+          <AlertCircle className="h-5 w-5 mr-2 shrink-0" />
+          <span className="text-sm">
+            {timedOut
+              ? 'Analytics timed out (504). This is a failed request, not empty data.'
+              : `Analytics unavailable: ${error.message}`}
+          </span>
+        </div>
+        <button type="button" onClick={onRetry} className="btn btn-outline btn-sm">
+          Retry analytics
+        </button>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+function AnalyticsBanner({
+  loading,
+  error,
+  onRetry,
+}: {
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center px-4 py-3 text-sm text-[var(--text-muted)] border-b border-[var(--border)]">
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        Loading fill analytics…
+      </div>
+    );
+  }
+  if (error) {
+    const timedOut = /504|timeout|timed out/i.test(error.message);
+    return (
+      <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm text-[var(--red)] border-b border-[var(--border)]">
+        <span className="flex items-center">
+          <AlertCircle className="h-4 w-4 mr-2 shrink-0" />
+          {timedOut
+            ? 'Analytics timed out (504) — edge figures are unavailable, not empty.'
+            : `Analytics failed: ${error.message}`}
+        </span>
+        <button type="button" onClick={onRetry} className="btn btn-outline btn-sm shrink-0">
+          Retry
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function WhaleProfile() {
   const params = useParams<{ address: string }>();
   const searchParams = useSearchParams();
   const address = params?.address ?? '';
   const { data: coreData, isLoading, isError, error } = useWhaleProfile(address);
-  const { data: analytics } = useWhaleProfileAnalytics(address, !!coreData);
+  const {
+    data: analytics,
+    isLoading: analyticsLoading,
+    isFetching: analyticsFetching,
+    isError: analyticsIsError,
+    error: analyticsError,
+    refetch: refetchAnalytics,
+  } = useWhaleProfileAnalytics(address, !!coreData);
   const data = coreData
     ? mergeWhaleProfile(coreData, analytics ?? null)
     : undefined;
+  const retryAnalytics = () => { void refetchAnalytics(); };
+  const showAnalyticsLoading = analyticsLoading || (analyticsFetching && !analytics);
+  const showAnalyticsError = analyticsIsError && !analytics && !showAnalyticsLoading;
+  const analyticsFailure = showAnalyticsError ? (analyticsError ?? new Error('Analytics request failed')) : null;
 
   const rankFromQuery = Number(searchParams?.get('rank') ?? '');
   const totalFromQuery = Number(searchParams?.get('total') ?? '');
@@ -134,11 +227,8 @@ export default function WhaleProfile() {
   const s = data.score;
   const winRatePct = Math.round(s.winRate * 100);
   const scorePct = Math.round(s.score * 100);
-  const totalWhales = liveTotal ?? 0;
-  const rankPercentile = totalWhales > 0 && liveRank !== null
-    ? Math.round((1 - liveRank / totalWhales) * 100)
-    : s.score >= 0.95 ? 95 : s.score >= 0.90 ? 90 : 75;
-  const rankBadge = rankPercentile >= 95 ? 'Top 5%' : rankPercentile >= 90 ? 'Top 10%' : 'Top 25%';
+  const rankDisplay = resolveRankDisplay(liveRank, liveTotal);
+  const consistency = resolveConsistencyDisplay(s.consistencyFactor, s.variancePenalty);
   const isPositivePnL = s.totalRealizedPnL >= 0;
   const sortedFills = [...(data.fills ?? [])].sort(
     (a, b) => Number(b.timestamp) - Number(a.timestamp),
@@ -161,16 +251,20 @@ export default function WhaleProfile() {
           <div>
             <h2 className="profile-name flex items-center gap-2">
               {shortenAddress(s.address)}
-              <span className="badge badge-accent font-mono text-xs">
-                Ranked Whale
+              <span className={`badge ${rankDisplay.status === 'ranked' ? 'badge-accent' : 'badge-outline'} font-mono text-xs`}>
+                {rankDisplay.whaleLabel}
               </span>
             </h2>
             <div className="profile-address">{s.address}</div>
             <div className="profile-meta">
               {scorePct}% Skill Score · {winRatePct}% Win Rate across {s.totalMarkets} settled markets
-              {totalWhales > 0 ? (
+              {rankDisplay.percentileLabel ? (
                 <span className="badge badge-outline text-xs ml-2">
-                  {rankBadge}
+                  {rankDisplay.percentileLabel}
+                </span>
+              ) : rankDisplay.status === 'ranked' && rankDisplay.rank !== null ? (
+                <span className="badge badge-outline text-xs ml-2">
+                  #{rankDisplay.rank}{rankDisplay.total ? ` / ${rankDisplay.total}` : ''}
                 </span>
               ) : null}
             </div>
@@ -193,7 +287,9 @@ export default function WhaleProfile() {
               handleCopyClick(firstCopyPosition.pool, firstCopyPosition.marketId, firstCopyPosition.side);
             }}
             disabled={!firstCopyPosition}
-            className="btn btn-accent disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${
+              firstCopyPosition ? 'btn-accent' : 'btn-outline'
+            }`}
             title={firstCopyPosition ? 'Copy first open position' : 'No open positions to copy'}
           >
             <Copy className="w-4 h-4 mr-1" />
@@ -227,7 +323,12 @@ export default function WhaleProfile() {
           <div className="stat-label">Bayesian Skill Score</div>
           <div className="stat-row">
             <div className="stat-value text-[var(--accent)]">{scorePct}%</div>
-            <span className="stat-trend up">{rankBadge}</span>
+            <span className={`stat-trend ${rankDisplay.percentileLabel ? 'up' : 'neutral'}`}>
+              {rankDisplay.percentileLabel
+                ?? (rankDisplay.status === 'ranked' && rankDisplay.rank !== null
+                  ? `#${rankDisplay.rank}`
+                  : 'Unranked')}
+            </span>
           </div>
           <div className="score-bar mt-3">
             <div className="score-bar-fill" style={{ width: `${scorePct}%` }} />
@@ -253,10 +354,10 @@ export default function WhaleProfile() {
           <div className="stat-label">Consistency Factor</div>
           <div className="stat-row">
             <div className="stat-value">{Math.round(s.consistencyFactor * 100)}%</div>
-            <span className="stat-trend up">Consistent</span>
+            <span className={`stat-trend ${consistency.trend}`}>{consistency.label}</span>
           </div>
           <div className="text-xs text-[var(--text-muted)] mt-3 font-mono">
-            {s.consistencyFactor >= 0.5 ? 'Low Variance Edge' : 'High Volatility'}
+            {consistency.subtitle}
           </div>
         </div>
       </div>
@@ -323,7 +424,16 @@ export default function WhaleProfile() {
               </tbody>
             </table>
           )}
-          {data.calibrationByMarketType.size > 0 && (
+          {(showAnalyticsLoading || analyticsFailure) && (
+            <div className="mt-6 border-t border-[var(--border)]">
+              <AnalyticsBanner
+                loading={showAnalyticsLoading}
+                error={analyticsFailure}
+                onRetry={retryAnalytics}
+              />
+            </div>
+          )}
+          {!showAnalyticsLoading && !analyticsFailure && data.calibrationByMarketType.size > 0 && (
             <div className="mt-6 border-t border-[var(--border)] pt-4">
               <h4 className="text-sm font-semibold mb-3">Calibration by market type</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -427,10 +537,21 @@ export default function WhaleProfile() {
             </p>
           </div>
           <span className={`badge ${data.calibration ? data.calibration.score >= 0.7 ? 'badge-green' : data.calibration.score >= 0.4 ? 'badge-amber' : 'badge-red' : 'badge-outline'} font-mono text-xs`}>
-            {data.calibration ? `${Math.round(data.calibration.score * 100)}% Calibrated` : 'No data'}
+            {showAnalyticsLoading
+              ? 'Loading…'
+              : analyticsFailure
+                ? 'Unavailable'
+                : data.calibration
+                  ? `${Math.round(data.calibration.score * 100)}% Calibrated`
+                  : 'No data'}
           </span>
         </div>
         <div className="card-body mt-4">
+          <AnalyticsGate
+            loading={showAnalyticsLoading}
+            error={analyticsFailure}
+            onRetry={retryAnalytics}
+          >
           {data.calibration && data.calibration.buckets.length > 0 ? (
             <div className="space-y-4">
               <div className="flex items-end justify-between text-xs text-[var(--text-muted)] mb-2">
@@ -485,6 +606,7 @@ export default function WhaleProfile() {
               Insufficient data for calibration analysis.
             </div>
           )}
+          </AnalyticsGate>
         </div>
       </div>
 
@@ -517,7 +639,13 @@ export default function WhaleProfile() {
 
         <div className="card-body p-0 mt-4 overflow-x-auto">
           {activeTab === 'fills' ? (
-            !data.fills || data.fills.length === 0 ? (
+            <>
+            <AnalyticsBanner
+              loading={showAnalyticsLoading}
+              error={analyticsFailure}
+              onRetry={retryAnalytics}
+            />
+            {!data.fills || data.fills.length === 0 ? (
               <div className="text-center py-12 text-[var(--text-muted)]">No trade fills recorded.</div>
             ) : (
               <table className="data-table">
@@ -539,6 +667,16 @@ export default function WhaleProfile() {
                     const edgeClass = edgeBps !== null
                       ? (isEdgePositive ? 'red' : 'green')
                       : 'text-[var(--text-secondary)]';
+                    const quoteDecimals = resolveFillQuoteDecimals(
+                      f.market,
+                      data.marketPnL,
+                      {
+                        ...data.quoteDecimalsByMarket,
+                        ...Object.fromEntries(
+                          data.openPositions.map((p) => [p.marketId.toLowerCase(), p.quoteDecimals]),
+                        ),
+                      },
+                    );
                     return (
                       <tr key={f.id}>
                         <td className="mono text-xs font-medium">{shortenAddress(f.market)}</td>
@@ -551,10 +689,10 @@ export default function WhaleProfile() {
                           </span>
                         </td>
                         <td className="right mono text-xs">
-                          {f.quantity ? Number(f.quantity).toFixed(2) : '—'}
+                          {formatFillQuantity(f.quantity, quoteDecimals)}
                         </td>
                         <td className="right mono font-semibold text-[var(--accent)]">
-                          {f.fillPrice ? `$${Number(f.fillPrice).toFixed(4)}` : '—'}
+                          {formatFillPrice(f.fillPrice, quoteDecimals)}
                         </td>
                         <td className={`right mono font-semibold ${edgeClass}`}>
                           <div className="flex items-center justify-end gap-1.5">
@@ -569,10 +707,16 @@ export default function WhaleProfile() {
                   })}
                 </tbody>
               </table>
-            )
+            )}
+            </>
           ) : (
-            // F7: Edge Analysis — Scatter plot of fill price vs fair value
-            <EdgeAnalysisScatter edges={data.edges ? Array.from(data.edges.values()) : []} />
+            <AnalyticsGate
+              loading={showAnalyticsLoading}
+              error={analyticsFailure}
+              onRetry={retryAnalytics}
+            >
+              <EdgeAnalysisScatter edges={data.edges ? Array.from(data.edges.values()) : []} />
+            </AnalyticsGate>
           )}
         </div>
       </div>
