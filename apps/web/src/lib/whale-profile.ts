@@ -123,7 +123,8 @@ function mapOpenPositions(
     if (yesHeld === noHeld || !Number.isInteger(decimals)) return [];
     return {
       marketId: position.market.id,
-      pool: position.market.poolAddress,
+      // placeCopyOrder looks up by BinaryMarket.marketAddress (clone), NOT poolAddress
+      pool: position.market.marketAddress,
       marketAddress: position.market.marketAddress,
       marketType: position.market.asset && position.market.interval
         ? `${position.market.asset}_${position.market.interval}`

@@ -5,6 +5,7 @@
  */
 import {
   SomniaMarkets,
+  SOMNIA_TESTNET_ADDRESSES,
   binaryFillsFor,
   computeBinaryPnl,
   type FillRow,
@@ -33,6 +34,8 @@ const exchange = INDEXER_URL
   ? new SomniaMarkets({
       chain: somniaChain,
       indexerUrl: INDEXER_URL,
+      // Required for getMarketOnchain / collateral metadata (binaryModule).
+      addresses: SOMNIA_TESTNET_ADDRESSES,
     })
   : null;
 
@@ -582,21 +585,72 @@ export async function fetchTraderOpenPositions(userAddress: string): Promise<Ope
 }
 
 /**
+ * Convert raw book top prices (same scale as BinaryMarket.lastPrice /
+ * quoteDecimals) into human YES-probability spread in basis points.
+ * Never multiply raw ints by 10_000 — that yields values like 210000000 bps.
+ */
+export function spreadBpsFromRawBookPrices(
+  bestBidRaw: string | number,
+  bestAskRaw: string | number,
+  quoteDecimals: number,
+): { spreadBps: number; midHuman: number } | null {
+  if (!Number.isInteger(quoteDecimals) || quoteDecimals < 0) return null;
+  const scale = 10 ** quoteDecimals;
+  const bid = Number(bestBidRaw) / scale;
+  const ask = Number(bestAskRaw) / scale;
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || ask < bid) return null;
+  return {
+    spreadBps: (ask - bid) * 10_000,
+    midHuman: (bid + ask) / 2,
+  };
+}
+
+/**
  * Fetch authoritative on-chain market status for a binary market via
  * `getMarketOnchain` (chain-level truth, not indexer).
+ * Requires SDK `addresses.binaryModule` (wired via SOMNIA_TESTNET_ADDRESSES).
  */
 export async function fetchMarketStatus(
   marketId: string,
-): Promise<MarketOnchain | null> {
+): Promise<{ onchain: MarketOnchain | null; error: string | null }> {
   try {
-    return await withTimeout(
+    if (!/^0x[0-9a-fA-F]{64}$/.test(marketId)) {
+      return {
+        onchain: null,
+        error:
+          "getMarketOnchain expects bytes32 marketId, not a contract/pool address",
+      };
+    }
+    const onchain = await withTimeout(
       getClient().getMarketOnchain(marketId as Hex),
       FETCH_TIMEOUT_MS,
       `getMarketOnchain(${marketId})`,
     );
+    return { onchain, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[dreamdex] getMarketOnchain failed for ${marketId}:`, message);
+    return { onchain: null, error: message };
+  }
+}
+
+/** Indexer quoteDecimals for scaling raw book/fill ints when on-chain decimals are unavailable. */
+export async function fetchMarketQuoteDecimals(
+  marketId: string,
+): Promise<number | null> {
+  try {
+    const market = await withTimeout(
+      getClient().getBinaryMarket(marketId as Hex),
+      FETCH_TIMEOUT_MS,
+      `getBinaryMarket(${marketId})`,
+    );
+    if (market && Number.isInteger(market.quoteDecimals) && market.quoteDecimals >= 0) {
+      return market.quoteDecimals;
+    }
+    return null;
   } catch (err) {
     console.warn(
-      `[dreamdex] getMarketOnchain failed for ${marketId}:`,
+      `[dreamdex] getBinaryMarket failed for ${marketId}:`,
       err instanceof Error ? err.message : String(err),
     );
     return null;
@@ -605,12 +659,13 @@ export async function fetchMarketStatus(
 
 /**
  * Fetch top-of-book depth for a market. Returns spread in basis points
- * (YES-probability scale) and the mid price. Both null when the book is
- * empty or one-sided.
+ * (YES-probability scale, human units) and the mid price. Both null when the
+ * book is empty, one-sided, or quoteDecimals are missing (refuse raw math).
  */
 export async function fetchOrderBookDepth(
   marketId: string,
-): Promise<{ spreadBps: number | null; mid: number | null }> {
+  quoteDecimals: number | null,
+): Promise<{ spreadBps: number | null; mid: number | null; error?: string }> {
   try {
     const bookTops = await withTimeout(
       getClient().getBookTops([marketId.toLowerCase()]),
@@ -622,18 +677,29 @@ export async function fetchOrderBookDepth(
       return { spreadBps: null, mid: null };
     }
     if (top.bestBid === null || top.bestAsk === null) {
-      return { spreadBps: null, mid: top.mid ? Number(top.mid) : null };
+      const midRaw = top.mid ? Number(top.mid) : null;
+      const mid =
+        midRaw !== null && quoteDecimals != null && Number.isInteger(quoteDecimals)
+          ? midRaw / 10 ** quoteDecimals
+          : midRaw;
+      return { spreadBps: null, mid };
     }
-    const bid = Number(top.bestBid);
-    const ask = Number(top.bestAsk);
-    if (ask < bid) return { spreadBps: null, mid: top.mid ? Number(top.mid) : null };
-    return { spreadBps: (ask - bid) * 10_000, mid: (bid + ask) / 2 };
+    if (quoteDecimals == null || !Number.isInteger(quoteDecimals) || quoteDecimals < 0) {
+      return {
+        spreadBps: null,
+        mid: null,
+        error: "quoteDecimals unavailable; refusing unscaled spread",
+      };
+    }
+    const scaled = spreadBpsFromRawBookPrices(top.bestBid, top.bestAsk, quoteDecimals);
+    if (!scaled) {
+      return { spreadBps: null, mid: top.mid ? Number(top.mid) / 10 ** quoteDecimals : null };
+    }
+    return { spreadBps: scaled.spreadBps, mid: scaled.midHuman };
   } catch (err) {
-    console.warn(
-      `[dreamdex] getBookTops failed for ${marketId}:`,
-      err instanceof Error ? err.message : String(err),
-    );
-    return { spreadBps: null, mid: null };
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[dreamdex] getBookTops failed for ${marketId}:`, message);
+    return { spreadBps: null, mid: null, error: message };
   }
 }
 
@@ -655,8 +721,17 @@ export async function checkMarketHealth(
   const gates: RiskGate[] = [];
   let collateralDecimals: number | null = null;
 
-  // ── Gates 1-3: on-chain market status ──
-  const onchain = await fetchMarketStatus(marketId);
+  // ── Gates 1-2: on-chain market status (needs addresses.binaryModule) ──
+  // Fetch indexer quoteDecimals in parallel so spread can scale even if RPC fails.
+  const [{ onchain, error: onchainError }, indexerDecimals] = await Promise.all([
+    fetchMarketStatus(marketId),
+    fetchMarketQuoteDecimals(marketId),
+  ]);
+  const quoteDecimals =
+    onchain && Number.isInteger(onchain.decimals) && onchain.decimals >= 0
+      ? onchain.decimals
+      : indexerDecimals;
+
   if (onchain) {
     // Gate 1: Market active
     const isActive = onchain.status === TRADING_STATUS;
@@ -682,9 +757,20 @@ export async function checkMarketHealth(
         : `Only ${timeLeft}s remaining (minimum ${MIN_EXPIRY_HEADROOM_S}s)`,
     });
   } else {
+    const reason = onchainError ?? "unknown error";
     gates.push(
-      { id: "market-active", label: "Market Active", status: "block", detail: "Unable to fetch market status" },
-      { id: "expiry-headroom", label: "Expiry Headroom", status: "block", detail: "Unable to fetch market expiry" },
+      {
+        id: "market-active",
+        label: "Market Active",
+        status: "block",
+        detail: `Unable to fetch market status: ${reason}`,
+      },
+      {
+        id: "expiry-headroom",
+        label: "Expiry Headroom",
+        status: "block",
+        detail: `Unable to fetch market expiry: ${reason}`,
+      },
     );
   }
 
@@ -706,8 +792,8 @@ export async function checkMarketHealth(
     gates.push({ id: "whale-position-open", label: "Whale Position Open", status: "block", detail: "Whale address unavailable" });
   }
 
-  // Gate 4: Spread check
-  const bookDepth = await fetchOrderBookDepth(marketId);
+  // Gate 4: Spread check (human YES-probability bps; never raw book ints)
+  const bookDepth = await fetchOrderBookDepth(marketId, quoteDecimals);
   if (bookDepth.spreadBps !== null) {
     const spreadBps = bookDepth.spreadBps;
     const gateStatus: RiskGateStatus =
@@ -723,7 +809,11 @@ export async function checkMarketHealth(
       id: "spread-check",
       label: "Spread Check",
       status: "block",
-      detail: bookDepth.mid !== null ? "One-sided book; spread cannot be verified" : "No resting liquidity",
+      detail: bookDepth.error
+        ? bookDepth.error
+        : bookDepth.mid !== null
+          ? "One-sided book; spread cannot be verified"
+          : "No resting liquidity",
     });
   }
 
@@ -753,7 +843,13 @@ export async function checkMarketHealth(
 
   // Gate 6: Collateral check
   try {
-    if (!onchain) throw new Error("Market collateral metadata unavailable");
+    if (!onchain) {
+      throw new Error(
+        onchainError
+          ? `Market collateral metadata unavailable (${onchainError})`
+          : "Market collateral metadata unavailable",
+      );
+    }
     const collateral = onchain.collateral as Address;
     const decimals = onchain.decimals;
     collateralDecimals = decimals;
