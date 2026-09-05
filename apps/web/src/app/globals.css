@@ -375,6 +375,11 @@ body {
   background: rgba(239,68,68,0.12);
 }
 
+.stat-trend.neutral {
+  color: var(--text-secondary);
+  background: rgba(255,255,255,0.06);
+}
+
 /* Cards & Grids */
 .card {
   background: var(--bg-card);

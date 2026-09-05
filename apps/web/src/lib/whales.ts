@@ -36,6 +36,26 @@ export interface WhaleLeaderboardEntry {
   lastUpdated: number;
 }
 
+export interface WhaleLeaderboardPayload {
+  whales: WhaleLeaderboardEntry[];
+  count: number;
+  generatedAt: string | null;
+}
+
+/** Parse `/api/whales` JSON without dropping generatedAt. */
+export function parseWhaleLeaderboardPayload(body: unknown): WhaleLeaderboardPayload {
+  const obj = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const whales = Array.isArray(obj.whales) ? (obj.whales as WhaleLeaderboardEntry[]) : [];
+  const count = typeof obj.count === "number" && Number.isFinite(obj.count)
+    ? obj.count
+    : whales.length;
+  const generatedAt =
+    typeof obj.generatedAt === "string" && obj.generatedAt.length > 0
+      ? obj.generatedAt
+      : null;
+  return { whales, count, generatedAt };
+}
+
 /**
  * Fetch the whale leaderboard from the real DreamDEX indexer.
  *

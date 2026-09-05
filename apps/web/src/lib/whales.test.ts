@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractTopTraders } from '@/lib/whales';
+import { extractTopTraders, parseWhaleLeaderboardPayload } from '@/lib/whales';
 import type { FillRow } from '@somnia-chain/markets-sdk';
 
 describe('extractTopTraders', () => {
@@ -67,5 +67,33 @@ describe('extractTopTraders', () => {
   it('returns empty array for empty fills', () => {
     const result = extractTopTraders([]);
     expect(result).toEqual([]);
+  });
+});
+
+describe('parseWhaleLeaderboardPayload', () => {
+  it('passes through whales, count, and generatedAt', () => {
+    const payload = parseWhaleLeaderboardPayload({
+      whales: [{ address: '0xabc' }],
+      count: 1,
+      generatedAt: '2026-09-05T21:00:00.000Z',
+    });
+    expect(payload.whales).toHaveLength(1);
+    expect(payload.count).toBe(1);
+    expect(payload.generatedAt).toBe('2026-09-05T21:00:00.000Z');
+  });
+
+  it('defaults missing fields without inventing whales', () => {
+    expect(parseWhaleLeaderboardPayload({})).toEqual({
+      whales: [],
+      count: 0,
+      generatedAt: null,
+    });
+    expect(parseWhaleLeaderboardPayload(null).generatedAt).toBeNull();
+    expect(parseWhaleLeaderboardPayload({ whales: [] }).generatedAt).toBeNull();
+  });
+
+  it('uses whales.length when count is absent', () => {
+    const payload = parseWhaleLeaderboardPayload({ whales: [{}, {}] });
+    expect(payload.count).toBe(2);
   });
 });

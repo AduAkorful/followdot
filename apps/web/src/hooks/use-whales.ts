@@ -1,28 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
-import type { WhaleLeaderboardEntry } from "@/lib/whales";
+import {
+  parseWhaleLeaderboardPayload,
+  type WhaleLeaderboardPayload,
+} from "@/lib/whales";
 
 export const WHALE_QUERY_KEY = "whale-leaderboard";
 
 async function fetchWhaleLeaderboardApi(
   limit: number,
   signal?: AbortSignal,
-): Promise<WhaleLeaderboardEntry[]> {
+): Promise<WhaleLeaderboardPayload> {
   const res = await fetch(`/api/whales?limit=${limit}`, {
     signal,
     cache: "no-store",
   });
-  const body = (await res.json()) as {
-    whales?: WhaleLeaderboardEntry[];
-    error?: string;
-  };
+  const body: unknown = await res.json();
+  const payload = parseWhaleLeaderboardPayload(body);
   if (!res.ok) {
-    throw new Error(body.error || `Leaderboard request failed (${res.status})`);
+    const error =
+      body && typeof body === "object" && "error" in body && typeof body.error === "string"
+        ? body.error
+        : `Leaderboard request failed (${res.status})`;
+    throw new Error(error);
   }
-  return body.whales ?? [];
+  return payload;
 }
 
 export function useWhaleLeaderboard(limit = 20) {
-  return useQuery<WhaleLeaderboardEntry[], Error>({
+  return useQuery<WhaleLeaderboardPayload, Error>({
     queryKey: [WHALE_QUERY_KEY, limit],
     queryFn: ({ signal }) => fetchWhaleLeaderboardApi(limit, signal),
     staleTime: 60_000,

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useWhaleLeaderboard } from '@/hooks/use-whales';
 import { Sparkline } from '@/components/sparkline';
 import { Pagination } from '@/components/pagination';
+import { formatSignedUsd, formatSnapshotLabel, sumNetRealizedPnL } from '@/lib/whale-display';
 import { Search, Loader2, AlertCircle } from 'lucide-react';
 
 function shortenAddress(addr: string): string {
@@ -24,7 +25,9 @@ function formatPnL(pnl: number): string {
 }
 
 export default function Home() {
-  const { data: whales = [], isLoading, isError, error } = useWhaleLeaderboard(50);
+  const { data, isLoading, isError, error } = useWhaleLeaderboard(50);
+  const whales = data?.whales ?? [];
+  const snapshotLabel = formatSnapshotLabel(data?.generatedAt);
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState<'skill' | 'calibration'>('skill');
@@ -53,12 +56,7 @@ export default function Home() {
     ? Math.round((whales.reduce((acc, w) => acc + w.score, 0) / whales.length) * 100)
     : 0;
 
-  const totalVolume = whales.reduce((acc, w) => acc + Math.abs(w.totalRealizedPnL || 0), 0);
-  const formatVol = (v: number) => {
-    if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
-    if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`;
-    return `$${v.toFixed(0)}`;
-  };
+  const netRealizedPnL = sumNetRealizedPnL(whales.map((w) => w.totalRealizedPnL));
 
   return (
     <div className="space-y-6">
@@ -66,6 +64,11 @@ export default function Home() {
         <h2 className="page-title">Whale Leaderboard</h2>
         <p className="page-subtitle">
           Top traders ranked by Bayesian skill score — consistent edge, not raw PnL.
+          {snapshotLabel ? (
+            <span className="block mt-1 text-xs text-[var(--text-muted)] font-normal">
+              Snapshot {snapshotLabel}
+            </span>
+          ) : null}
         </p>
       </div>
 
@@ -92,13 +95,28 @@ export default function Home() {
           <Sparkline trend="up" height={32} id="stat2" data={whales.map(w => w.score * 100)} />
         </div>
 
-        <div className="stat-card">
+        <div
+          className="stat-card"
+          title="Net realized PnL across tracked whales (losses offset gains)."
+        >
           <div className="stat-label">Indexed Realized PnL</div>
           <div className="stat-row">
-            <div className="stat-value">{whales.length > 0 ? formatVol(totalVolume) : '—'}</div>
-            <span className="stat-trend up">{whales.length > 0 ? 'Live' : (isLoading ? 'Loading' : 'Empty')}</span>
+            <div className={`stat-value ${whales.length > 0 && netRealizedPnL < 0 ? 'text-[var(--red)]' : ''}`}>
+              {whales.length > 0 ? formatSignedUsd(netRealizedPnL) : '—'}
+            </div>
+            <span className={`stat-trend ${whales.length > 0 ? (netRealizedPnL >= 0 ? 'up' : 'down') : 'neutral'}`}>
+              {whales.length > 0 ? 'Net' : (isLoading ? 'Loading' : 'Empty')}
+            </span>
           </div>
-          <Sparkline trend="up" height={32} id="stat3" data={whales.map(w => Math.abs(w.totalRealizedPnL))} />
+          <Sparkline
+            trend={netRealizedPnL >= 0 ? 'up' : 'down'}
+            height={32}
+            id="stat3"
+            data={whales.map((w) => w.totalRealizedPnL)}
+          />
+          <div className="text-xs text-[var(--text-muted)] mt-2">
+            Net sum · losses offset gains
+          </div>
         </div>
 
         <div className="stat-card">
