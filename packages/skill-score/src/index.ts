@@ -10,7 +10,7 @@
  *   skillScore = bayesianWinRate × consistencyFactor − variancePenalty
  *
  * where:
- *   - bayesianWinRate = (wins + 1) / (totalMarkets + 2)   [Laplace smoothing, α=5]
+ *   - bayesianWinRate = (wins + α) / (totalMarkets + 2α)   [Laplace smoothing, α=5]
  *   - consistencyFactor = fraction of market-type buckets where winRate ≥ 0.5
  *   - variancePenalty = min(cv(realizedPnL), 0.5)   [coefficient of variation, capped]
  *     If mean PnL ≈ 0 with non-zero variance, penalty = max (pure noise).
@@ -26,8 +26,13 @@ export * from "./calibration";
 export interface MarketResult {
   marketId: string;
   marketType: string; // e.g. "BTC_hourly", "ETH_daily"
-  pnl: number;        // realized PnL in USDso (positive = win, negative = loss)
-  isUp: boolean;      // whether the wallet held the Up outcome (informational)
+  pnl: number;        // realized PnL in USDso (positive = profit, negative = loss)
+  isUp: boolean;      // whether the wallet held the Up/YES outcome (informational)
+  /**
+   * Explicit win from outcome-vs-side when the market is resolved.
+   * Prefer this over `pnl > 0` so break-even / post-redeem $0 is not an automatic win.
+   */
+  won?: boolean;
 }
 
 export interface SkillScoreInput {
@@ -51,6 +56,12 @@ export interface SkillScoreResult {
 const LAPLACE_ALPHA = 5;
 /** Max variance penalty (prevents a single huge-loss trade from zeroing the score). */
 const MAX_VARIANCE_PENALTY = 0.5;
+
+/** Win if outcome-vs-side says so; otherwise require strictly positive PnL (not break-even). */
+export function isMarketWin(m: MarketResult): boolean {
+  if (typeof m.won === "boolean") return m.won;
+  return m.pnl > 0;
+}
 
 /**
  * Compute the skill score for a single wallet.
@@ -81,7 +92,7 @@ export function computeSkillScore(input: SkillScoreInput): SkillScoreResult {
   const marketTypes = new Map<string, { wins: number; total: number }>();
 
   for (const m of settledMarkets) {
-    const won = m.pnl >= 0;
+    const won = isMarketWin(m);
     if (won) wins++;
     totalPnL += m.pnl;
     pnls.push(m.pnl);

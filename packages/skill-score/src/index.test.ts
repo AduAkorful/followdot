@@ -185,6 +185,7 @@ describe('NaN and Infinity safety', () => {
     });
     expect(result.score).not.toBeNaN();
     expect(result.variancePenalty).toBe(0); // no variance when all pnl = 0
+    expect(result.winRate).toBe(0); // break-even is not a win
   });
 
   it('penalizes max when mean≈0 with non-zero variance (pure noise)', () => {
@@ -271,5 +272,45 @@ describe('NaN and Infinity safety', () => {
     expect(result.variancePenalty).toBe(0);
     expect(result.score).not.toBeNaN();
     expect(result.totalRealizedPnL).toBe(0);
+  });
+});
+
+describe('honest win definition (pnl=0 is not a win)', () => {
+  it('does not count break-even (pnl=0) as a win', () => {
+    const result = computeSkillScore({
+      address: '0xabc',
+      settledMarkets: [
+        { marketId: 'm1', marketType: 'BTC_hourly', pnl: 0, isUp: true },
+        { marketId: 'm2', marketType: 'BTC_hourly', pnl: 10, isUp: true },
+        { marketId: 'm3', marketType: 'BTC_hourly', pnl: -5, isUp: false },
+      ],
+    });
+    // Only m2 counts as a win (pnl > 0)
+    expect(result.winRate).toBeCloseTo(1 / 3, 5);
+  });
+
+  it('all zero-PnL redeemed markets are 0% win rate, not 100%', () => {
+    const result = computeSkillScore({
+      address: '0xabc',
+      settledMarkets: Array.from({ length: 10 }, (_, i) => ({
+        marketId: `m${i}`,
+        marketType: 'BTC_hourly',
+        pnl: 0,
+        isUp: true,
+      })),
+    });
+    expect(result.winRate).toBe(0);
+    expect(result.bayesianWinRate).toBeCloseTo(5 / 20, 3); // (0+5)/(10+10)
+  });
+
+  it('prefers explicit won over pnl sign', () => {
+    const result = computeSkillScore({
+      address: '0xabc',
+      settledMarkets: [
+        { marketId: 'm1', marketType: 'BTC_hourly', pnl: 0, isUp: true, won: true },
+        { marketId: 'm2', marketType: 'BTC_hourly', pnl: 5, isUp: false, won: false },
+      ],
+    });
+    expect(result.winRate).toBe(0.5);
   });
 });

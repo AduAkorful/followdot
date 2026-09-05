@@ -15,6 +15,7 @@ import {
   extractTopTraders,
   fetchTraderFills,
   fetchResolvedMarkets,
+  fetchMarketsForFillIds,
   buildMarketMap,
   computePerMarketPnL,
 } from "./dreamdex";
@@ -73,7 +74,12 @@ export async function fetchWhaleLeaderboard(
       const traderFills = await fetchTraderFills(address, 1000, signal);
       if (traderFills.length === 0) continue;
 
-      const marketPnL = await computePerMarketPnL(address, traderFills, marketMap, signal);
+      const traderMarketMap = await fetchMarketsForFillIds(
+        traderFills.map((f) => f.market),
+        marketMap,
+        signal,
+      );
+      const marketPnL = await computePerMarketPnL(address, traderFills, traderMarketMap, signal);
       if (marketPnL.length === 0) continue;
 
       const marketResults: MarketResult[] = marketPnL.map((r) => ({
@@ -81,6 +87,7 @@ export async function fetchWhaleLeaderboard(
         marketType: r.marketType,
         pnl: r.pnl,
         isUp: r.isUp,
+        ...(r.won !== undefined ? { won: r.won } : {}),
       }));
 
       const score: SkillScoreResult = computeSkillScore({
@@ -89,7 +96,7 @@ export async function fetchWhaleLeaderboard(
       });
 
       const calibrationFills = traderFills.flatMap((fill) => {
-        const market = marketMap.get(fill.market.toLowerCase());
+        const market = traderMarketMap.get(fill.market.toLowerCase());
         const fillSide = fill.takerSide ?? fill.takerOrder?.side;
         if (!market || market.winningOutcome === null || market.voided || !fillSide || !fill.fillPrice) {
           return [];

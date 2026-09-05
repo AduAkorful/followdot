@@ -288,13 +288,25 @@ export async function getClaimablePositions(
 
 /**
  * Redeem all claimable positions in a single transaction.
+ * Requires a signer: pass wagmi `walletClient` (browser) or `privateKey` (worker).
  */
 export async function redeemAll(
   sdk: SomniaMarkets,
   entries: ClaimablePosition[],
-  operatorId?: number,
+  opts?: {
+    operatorId?: number;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    walletClient?: any;
+    privateKey?: `0x${string}`;
+  },
 ): Promise<{ hash: string }> {
-  const trader = sdk.client.createTrader({});
+  if (!opts?.walletClient && !opts?.privateKey) {
+    throw new Error("Wallet not connected: redeemAll requires walletClient or privateKey");
+  }
+  const trader = sdk.client.createTrader({
+    ...(opts.walletClient ? { walletClient: opts.walletClient } : {}),
+    ...(opts.privateKey ? { privateKey: opts.privateKey } : {}),
+  });
   const redeemEntries = entries.map((c) => ({
     marketId: c.marketId as `0x${string}`,
     outcomeIdx: c.outcomeIdx,
@@ -303,7 +315,7 @@ export async function redeemAll(
 
   const result = await trader.redeemMany({
     entries: redeemEntries,
-    operatorId,
+    operatorId: opts.operatorId,
   });
 
   return { hash: result.hash };
@@ -407,10 +419,30 @@ export async function indexWhalePortfolio(
   // Fetch trader fills
   const fills = await getUserFills(sdk, account, 2000);
 
+  // Resolve markets present in fills that may sit outside the newest-N past list.
+  const missingIds = [...new Set(fills.map((f) => String(f.market).toLowerCase()))]
+    .filter((id) => id.startsWith("0x") && !marketMap.has(id))
+    .slice(0, 80);
+  for (let i = 0; i < missingIds.length; i += 8) {
+    const chunk = missingIds.slice(i, i + 8);
+    const rows = await Promise.all(
+      chunk.map(async (id) => {
+        try {
+          return await client.getBinaryMarket(id as `0x${string}`);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const m of rows) {
+      if (m) marketMap.set(m.id.toLowerCase(), m);
+    }
+  }
+
   // Group fills by market
   const byMarket = new Map<string, FillRow[]>();
   for (const f of fills) {
-    const mid = f.market.toLowerCase();
+    const mid = String(f.market).toLowerCase();
     const arr = byMarket.get(mid);
     if (arr) arr.push(f);
     else byMarket.set(mid, [f]);
@@ -455,16 +487,63 @@ export async function indexWhalePortfolio(
       voided: market.voided,
     };
 
-    const binaryPnl = computeBinaryPnl(pnlFills, balances, marketPick);
+    // Honest settlement: after redeem balances=0, reconstruct from fills + winningOutcome
+    // (SDK computeBinaryPnl only realizes on sells; held-to-resolution winners become $0 otherwise).
+    let binaryPnl = computeBinaryPnl(pnlFills, balances, marketPick);
+    const heldYes = BigInt(balances.yes);
+    const heldNo = BigInt(balances.no);
+    const resolved = market.winningOutcome != null || market.voided;
+    if (resolved && heldYes === 0n && heldNo === 0n) {
+      const scale = 10 ** decimals;
+      const book = [
+        { qty: 0, cost: 0 },
+        { qty: 0, cost: 0 },
+      ];
+      for (const f of [...pnlFills].reverse()) {
+        const idx = f.outcomeIndex === 1 ? 1 : 0;
+        const qty = Number(BigInt(f.quantity)) / scale;
+        const px = Number(BigInt(f.price)) / scale;
+        const b = book[idx];
+        if (f.isBuy) {
+          b.qty += qty;
+          b.cost += qty * px;
+        } else {
+          const avg = b.qty > 0 ? b.cost / b.qty : 0;
+          const sold = Math.min(qty, b.qty);
+          b.qty -= sold;
+          b.cost -= avg * sold;
+        }
+      }
+      const markFor = (idx: number) => {
+        if (market.voided) return 0.5;
+        if (market.winningOutcome != null) return market.winningOutcome === idx ? 1 : 0;
+        return 0;
+      };
+      let settlement = binaryPnl.realized;
+      for (const idx of [0, 1] as const) {
+        if (book[idx].qty > 1e-12) {
+          settlement += book[idx].qty * markFor(idx) - book[idx].cost;
+        }
+      }
+      binaryPnl = { ...binaryPnl, realized: settlement, unrealized: 0, total: settlement };
+    }
     pnl = binaryPnl.total;
 
     const marketType = `${market.asset}_${market.interval}`;
+
+    const won =
+      market.voided || market.winningOutcome == null
+        ? undefined
+        : isUp
+          ? market.winningOutcome === 0
+          : market.winningOutcome === 1;
 
     results.push({
       marketId: marketId,
       marketType,
       pnl,
       isUp,
+      ...(won !== undefined ? { won } : {}),
     });
   }
 

@@ -11,6 +11,8 @@ import {
   type OpenPositionPnL,
   type BinaryMarket,
   type BinaryPnl,
+  type BinaryPnlFill,
+  type OutcomeBalances,
   type MarketOnchain,
   type BookTop,
   type Candle,
@@ -22,6 +24,8 @@ const FETCH_TIMEOUT_MS = 15_000;
 const MAX_RESOLVED_PAGES = 10; // browser/API budget — ~2k past markets
 const MAX_TRADER_FILL_PAGES = 5;
 const MAX_CONCURRENT_BALANCE_READS = 10;
+const MAX_CONCURRENT_MARKET_READS = 8;
+const MAX_MARKETS_BY_FILL_ID = 80;
 const TRADER_FILL_PAGE_SIZE = 200;
 const RESOLVED_MARKET_PAGE_SIZE = 200;
 
@@ -276,6 +280,139 @@ export function buildMarketMap(
   return map;
 }
 
+/**
+ * Resolve markets present in a trader's fills that may fall outside the
+ * newest-N `listPastBinaryMarkets` window. Caps fan-out with a budget.
+ */
+export async function fetchMarketsForFillIds(
+  marketIds: string[],
+  existing: Map<string, BinaryMarket>,
+  signal?: AbortSignal,
+  budget = MAX_MARKETS_BY_FILL_ID,
+): Promise<Map<string, BinaryMarket>> {
+  const map = new Map(existing);
+  const missing = [...new Set(marketIds.map((id) => id.toLowerCase()))]
+    .filter((id) => id.startsWith("0x") && !map.has(id))
+    .slice(0, budget);
+
+  for (let i = 0; i < missing.length; i += MAX_CONCURRENT_MARKET_READS) {
+    if (signal?.aborted) break;
+    const chunk = missing.slice(i, i + MAX_CONCURRENT_MARKET_READS);
+    const rows = await Promise.all(
+      chunk.map(async (id) => {
+        try {
+          const market = await withTimeout(
+            getClient().getBinaryMarket(id),
+            FETCH_TIMEOUT_MS,
+            `getBinaryMarket(${id})`,
+          );
+          return market;
+        } catch (err) {
+          console.warn(
+            `[dreamdex] getBinaryMarket failed for ${id}:`,
+            err instanceof Error ? err.message : String(err),
+          );
+          return null;
+        }
+      }),
+    );
+    for (const market of rows) {
+      if (!market) continue;
+      map.set(market.id.toLowerCase(), market);
+    }
+  }
+  return map;
+}
+
+/**
+ * When a resolved market has been fully redeemed (balances = 0),
+ * `computeBinaryPnl` reports total ≈ 0 because realized only accrues on sells
+ * and unrealized marks *current* holdings. Reconstruct settlement PnL from
+ * fill inventory × settlement mark (avg cost vs 1/0/0.5).
+ */
+export function computeHonestBinaryPnl(
+  fills: BinaryPnlFill[],
+  balances: OutcomeBalances,
+  market: Pick<BinaryMarket, "quoteDecimals" | "lastPrice" | "winningOutcome" | "voided">,
+): BinaryPnl {
+  const base = computeBinaryPnl(fills, balances, market);
+  const resolved = market.winningOutcome != null || market.voided;
+  if (!resolved) return base;
+
+  const heldYes = BigInt(balances.yes);
+  const heldNo = BigInt(balances.no);
+  // Still holding outcome tokens → SDK already marks unrealized to settlement.
+  if (heldYes > 0n || heldNo > 0n) return base;
+
+  const decimals = market.quoteDecimals;
+  if (!Number.isInteger(decimals) || decimals < 0) return base;
+  const scale = 10 ** decimals;
+  const book = [
+    { qty: 0, cost: 0, realized: 0 },
+    { qty: 0, cost: 0, realized: 0 },
+  ];
+  for (const f of [...fills].reverse()) {
+    const idx = f.outcomeIndex === 1 ? 1 : 0;
+    const qty = Number(BigInt(f.quantity)) / scale;
+    const px = Number(BigInt(f.price)) / scale;
+    const b = book[idx];
+    if (f.isBuy) {
+      b.qty += qty;
+      b.cost += qty * px;
+    } else {
+      const avg = b.qty > 0 ? b.cost / b.qty : 0;
+      const sold = Math.min(qty, b.qty);
+      b.realized += (px - avg) * sold;
+      b.qty -= sold;
+      b.cost -= avg * sold;
+    }
+  }
+
+  const markFor = (idx: number): number => {
+    if (market.voided) return 0.5;
+    if (market.winningOutcome != null) return market.winningOutcome === idx ? 1 : 0;
+    return 0;
+  };
+
+  const settleSide = (idx: 0 | 1) => {
+    const b = book[idx];
+    if (b.qty <= 1e-12) return 0;
+    return b.qty * markFor(idx) - b.cost;
+  };
+
+  const yesSettle = settleSide(0);
+  const noSettle = settleSide(1);
+  const realized = base.realized + yesSettle + noSettle;
+
+  return {
+    yes: {
+      ...base.yes,
+      realized: base.yes.realized + yesSettle,
+      unrealized: 0,
+      value: 0,
+    },
+    no: {
+      ...base.no,
+      realized: base.no.realized + noSettle,
+      unrealized: 0,
+      value: 0,
+    },
+    realized,
+    unrealized: 0,
+    total: realized,
+  };
+}
+
+/** Outcome-vs-side win for a resolved market; undefined when unresolved/voided. */
+export function marketWonFromSide(
+  market: Pick<BinaryMarket, "winningOutcome" | "voided">,
+  isUp: boolean,
+): boolean | undefined {
+  if (market.voided || market.winningOutcome == null) return undefined;
+  return isUp ? market.winningOutcome === 0 : market.winningOutcome === 1;
+}
+
+
 // ─── PnL computation ────────────────────────────────────────────────
 
 /** Compute per-market realized + unrealised PnL for one trader. */
@@ -292,6 +429,7 @@ export async function computePerMarketPnL(
     pnl: number;
     isUp: boolean;
     tradeCount: number;
+    won?: boolean;
   }[]
 > {
   // Group fills by market
@@ -346,7 +484,7 @@ export async function computePerMarketPnL(
             voided: market.voided,
           };
 
-          const pnl: BinaryPnl = computeBinaryPnl(pnlFills, balances, marketPick);
+          const pnl: BinaryPnl = computeHonestBinaryPnl(pnlFills, balances, marketPick);
 
           // Determine whether the trader was net long YES (isUp)
           // Uses BigInt arithmetic to avoid Number.MAX_SAFE_INTEGER precision loss
@@ -360,14 +498,17 @@ export async function computePerMarketPnL(
             throw new Error(`Market metadata unavailable for ${marketId}`);
           }
           const marketType = `${market.asset}_${market.interval}`;
+          const isUp = yesExposure > 0n;
+          const won = marketWonFromSide(market, isUp);
 
           return {
             marketId,
             marketAddress: market.marketAddress,
             marketType,
             pnl: pnl.total,
-            isUp: yesExposure > 0n,
+            isUp,
             tradeCount: pnlFills.length,
+            ...(won !== undefined ? { won } : {}),
           };
         }),
       ),
