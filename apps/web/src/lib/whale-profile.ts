@@ -39,6 +39,7 @@ export interface WhaleMarketPnL {
   isUp: boolean;
   tradeCount: number;
   won?: boolean;
+  quoteDecimals: number;
 }
 
 export interface MarketTypeWinRate {
@@ -67,6 +68,8 @@ export interface WhaleProfileCore {
   score: SkillScoreResult;
   marketPnL: WhaleMarketPnL[];
   fills: FillRow[];
+  /** marketId (lowercased) → quoteDecimals for scaling fill price/qty */
+  quoteDecimalsByMarket: Record<string, number>;
   openPositions: Array<{
     marketId: string;
     pool: string;
@@ -95,6 +98,19 @@ export interface WhaleProfileData extends WhaleProfileCore {
   calibration: CalibrationResult | null;
   /** F8: calibration score per market type */
   calibrationByMarketType: Map<string, CalibrationResult>;
+}
+
+
+function quoteDecimalsByMarketFromMap(
+  marketMap: Map<string, BinaryMarket>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [id, market] of marketMap) {
+    if (Number.isInteger(market.quoteDecimals) && market.quoteDecimals >= 0) {
+      out[id.toLowerCase()] = market.quoteDecimals;
+    }
+  }
+  return out;
 }
 
 function mapOpenPositions(
@@ -156,6 +172,7 @@ export async function fetchWhaleProfileCore(
       score: emptyScore,
       marketPnL: [],
       fills: [],
+      quoteDecimalsByMarket: quoteDecimalsByMarketFromMap(marketMap),
       openPositions,
       winRateByMarketType: [],
     };
@@ -200,6 +217,7 @@ export async function fetchWhaleProfileCore(
     score,
     marketPnL,
     fills,
+    quoteDecimalsByMarket: quoteDecimalsByMarketFromMap(marketMap),
     openPositions,
     winRateByMarketType,
   };
@@ -308,6 +326,7 @@ export function mergeWhaleProfile(
   }
   return {
     ...core,
+    quoteDecimalsByMarket: core.quoteDecimalsByMarket ?? {},
     edges,
     calibration: analytics?.calibration ?? null,
     calibrationByMarketType,

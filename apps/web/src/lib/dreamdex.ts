@@ -430,6 +430,7 @@ export async function computePerMarketPnL(
     isUp: boolean;
     tradeCount: number;
     won?: boolean;
+    quoteDecimals: number;
   }[]
 > {
   // Group fills by market
@@ -508,6 +509,7 @@ export async function computePerMarketPnL(
             pnl: pnl.total,
             isUp,
             tradeCount: pnlFills.length,
+            quoteDecimals: market.quoteDecimals,
             ...(won !== undefined ? { won } : {}),
           };
         }),
