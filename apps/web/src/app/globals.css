@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "./layout-responsive.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -299,7 +300,7 @@ body {
 /* Stat Cards */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 28px;
 }
@@ -310,7 +311,7 @@ body {
   border-radius: var(--radius-lg);
   padding: 20px;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   transition: all 0.3s ease;
 }
 

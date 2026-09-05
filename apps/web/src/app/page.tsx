@@ -74,8 +74,8 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Whales Tracked</div>
           <div className="stat-row">
-            <div className="stat-value">{whales.length > 0 ? whales.length : 'Unavailable'}</div>
-            <span className="stat-trend up">{whales.length > 0 ? 'Live' : 'No live data'}</span>
+            <div className="stat-value">{whales.length > 0 ? whales.length : '—'}</div>
+            <span className="stat-trend up">{whales.length > 0 ? 'Live' : (isLoading ? 'Loading' : 'Empty')}</span>
           </div>
           <Sparkline trend="up" height={32} id="stat1" data={whales.map(w => w.score * 100)} />
         </div>
@@ -84,10 +84,10 @@ export default function Home() {
           <div className="stat-label">Avg Skill Score</div>
           <div className="stat-row">
             <div className="stat-value">
-              {whales.length > 0 ? avgSkillScore : 'Unavailable'}
+              {whales.length > 0 ? avgSkillScore : '—'}
               {whales.length > 0 && <span className="text-base text-[var(--text-muted)]">%</span>}
             </div>
-            <span className="stat-trend up">{whales.length > 0 ? 'Live' : 'No live data'}</span>
+            <span className="stat-trend up">{whales.length > 0 ? 'Live' : (isLoading ? 'Loading' : 'Empty')}</span>
           </div>
           <Sparkline trend="up" height={32} id="stat2" data={whales.map(w => w.score * 100)} />
         </div>
@@ -95,8 +95,8 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Indexed Realized PnL</div>
           <div className="stat-row">
-            <div className="stat-value">{whales.length > 0 ? formatVol(totalVolume) : 'Unavailable'}</div>
-            <span className="stat-trend up">{whales.length > 0 ? 'Live' : 'No live data'}</span>
+            <div className="stat-value">{whales.length > 0 ? formatVol(totalVolume) : '—'}</div>
+            <span className="stat-trend up">{whales.length > 0 ? 'Live' : (isLoading ? 'Loading' : 'Empty')}</span>
           </div>
           <Sparkline trend="up" height={32} id="stat3" data={whales.map(w => Math.abs(w.totalRealizedPnL))} />
         </div>
@@ -104,8 +104,8 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Active Copiers</div>
           <div className="stat-row">
-            <div className="stat-value text-base">Unavailable</div>
-            <span className="badge badge-outline">No live source</span>
+            <div className="stat-value text-base">—</div>
+            <span className="badge badge-outline">N/A</span>
           </div>
         </div>
       </div>

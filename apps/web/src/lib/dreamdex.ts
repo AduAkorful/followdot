@@ -19,8 +19,8 @@ import type { Address, Hex } from "viem";
 import { somniaChain, INDEXER_URL } from "../config/somnia";
 
 const FETCH_TIMEOUT_MS = 15_000;
-const MAX_RESOLVED_PAGES = 100;
-const MAX_TRADER_FILL_PAGES = 20;
+const MAX_RESOLVED_PAGES = 10; // browser/API budget — ~2k past markets
+const MAX_TRADER_FILL_PAGES = 5;
 const MAX_CONCURRENT_BALANCE_READS = 10;
 const TRADER_FILL_PAGE_SIZE = 200;
 const RESOLVED_MARKET_PAGE_SIZE = 200;
