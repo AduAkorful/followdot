@@ -36,3 +36,6 @@ docs/
 
 # local QA artifacts
 .qa/
+
+# Local session-key / secrets store (never commit)
+.data/

@@ -1,18 +1,36 @@
 'use client';
 
-import { useState } from 'react';
-import { useAccount } from 'wagmi';
+import { useCallback, useEffect, useState } from 'react';
+import { useAccount, useWalletClient } from 'wagmi';
 import { ConnectButton } from '@/components/connect-button';
 import { EditRuleModal, AutoCopyRule } from '@/components/edit-rule-modal';
 import { Key, Shield, Pause, Play, Edit3 } from 'lucide-react';
 import Link from 'next/link';
+import {
+  classifySessionKeyError,
+  grantDreamDexSessionKey,
+  setSessionOperatorApproval,
+} from '@/lib/grant-session-key';
+import type { Address } from 'viem';
+
+interface SessionStatus {
+  active: boolean;
+  sessionAddress: string | null;
+  grantTxHash: string | null;
+  onChainGranted: boolean;
+  workerNote?: string;
+}
 
 export default function SettingsPage() {
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
+  const { data: walletClient } = useWalletClient();
 
   const [bankrollCap, setBankrollCap] = useState<number | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionKeyAddress, setSessionKeyAddress] = useState<string | null>(null);
+  const [grantTxHash, setGrantTxHash] = useState<string | null>(null);
+  const [onChainGranted, setOnChainGranted] = useState(false);
+  const [workerNote, setWorkerNote] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [rules, setRules] = useState<AutoCopyRule[]>([]);
@@ -20,26 +38,148 @@ export default function SettingsPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
 
   const [sessionGranting, setSessionGranting] = useState(false);
+  const [sessionRevoking, setSessionRevoking] = useState(false);
+
+  const applyStatus = useCallback((data: SessionStatus) => {
+    setSessionActive(Boolean(data.active && data.sessionAddress));
+    setSessionKeyAddress(data.sessionAddress);
+    setGrantTxHash(data.grantTxHash);
+    setOnChainGranted(Boolean(data.onChainGranted));
+    setWorkerNote(data.workerNote ?? null);
+  }, []);
+
+  const refreshSessionStatus = useCallback(async () => {
+    if (!address) return;
+    try {
+      const res = await fetch(`/api/auth-session-key?wallet=${encodeURIComponent(address)}`, {
+        headers: { 'x-wallet-address': address },
+      });
+      if (res.status === 404) {
+        setSessionError('Session-key API route is missing (404). Restart the Next.js app.');
+        return;
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        setSessionError(body?.error ?? `Failed to load session status (${res.status})`);
+        return;
+      }
+      const data = (await res.json()) as SessionStatus;
+      applyStatus(data);
+      setSessionError(null);
+    } catch {
+      setSessionError('Could not reach session-key API. Is the web app running?');
+    }
+  }, [address, applyStatus]);
+
+  useEffect(() => {
+    if (isConnected && address) {
+      void refreshSessionStatus();
+    } else {
+      setSessionActive(false);
+      setSessionKeyAddress(null);
+      setGrantTxHash(null);
+      setOnChainGranted(false);
+      setWorkerNote(null);
+    }
+  }, [isConnected, address, refreshSessionStatus]);
 
   const handleGrantSessionKey = async () => {
     setSessionGranting(true);
     setSessionError(null);
     try {
-      const res = await fetch('/api/auth-session-key', { method: 'POST' });
-      if (!res.ok) throw new Error('Authorization endpoint not available');
-      const data = await res.json();
-      setSessionActive(true);
-      setSessionKeyAddress(data.address);
-    } catch {
-      setSessionError('Session-key authorization is temporarily unavailable. Try again later.');
+      if (!address) throw new Error('Connect your wallet first.');
+      if (!walletClient) throw new Error('Wallet client unavailable. Reconnect and try again.');
+
+      // 1) Ephemeral key + MetaMask/on-chain OperatorPermissionsRegistry grant
+      const granted = await grantDreamDexSessionKey({ walletClient });
+
+      // 2) Persist for local/dev (worker SESSION_KEYS_KV sync is separate)
+      const res = await fetch('/api/auth-session-key', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-wallet-address': address,
+        },
+        body: JSON.stringify({
+          walletAddress: address,
+          sessionAddress: granted.address,
+          sessionKey: granted.privateKey,
+          grantTxHash: granted.grantTxHash,
+          onChainGranted: granted.onChainGranted,
+        }),
+      });
+
+      if (res.status === 404) {
+        throw new Error('Authorization endpoint not available (404)');
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(
+          body?.error ??
+            `Registration failed (${res.status}). On-chain grant may have succeeded — check MetaMask activity.`,
+        );
+      }
+
+      const data = (await res.json()) as SessionStatus & { address?: string };
+      applyStatus({
+        active: true,
+        sessionAddress: data.address ?? data.sessionAddress ?? granted.address,
+        grantTxHash: data.grantTxHash ?? granted.grantTxHash,
+        onChainGranted: data.onChainGranted ?? granted.onChainGranted,
+        workerNote: data.workerNote,
+      });
+    } catch (err) {
+      setSessionError(classifySessionKeyError(err));
+      // Do not mark active on failure — refresh in case a prior key exists
+      await refreshSessionStatus();
     } finally {
       setSessionGranting(false);
     }
   };
 
-  const handleRevokeSessionKey = () => {
-    setSessionActive(false);
-    setSessionKeyAddress(null);
+  const handleRevokeSessionKey = async () => {
+    if (!address) return;
+    setSessionRevoking(true);
+    setSessionError(null);
+    try {
+      // Revoke on-chain first when we have a known session address + wallet client
+      if (walletClient && sessionKeyAddress && onChainGranted) {
+        try {
+          await setSessionOperatorApproval({
+            walletClient,
+            operator: sessionKeyAddress as Address,
+            approved: false,
+          });
+        } catch (err) {
+          // Still clear local store, but surface chain revoke failure
+          setSessionError(
+            `On-chain revoke failed (${classifySessionKeyError(err)}). Clearing local registration anyway.`,
+          );
+        }
+      }
+
+      const res = await fetch('/api/auth-session-key', {
+        method: 'DELETE',
+        headers: { 'x-wallet-address': address },
+      });
+      if (res.status === 404) {
+        throw new Error('Authorization endpoint not available (404)');
+      }
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Revoke failed (${res.status})`);
+      }
+
+      setSessionActive(false);
+      setSessionKeyAddress(null);
+      setGrantTxHash(null);
+      setOnChainGranted(false);
+      setWorkerNote(null);
+    } catch (err) {
+      setSessionError(classifySessionKeyError(err));
+    } finally {
+      setSessionRevoking(false);
+    }
   };
 
   const handleToggleRuleStatus = (whaleAddr: string) => {
@@ -102,31 +242,53 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-[var(--text-muted)]">Session Expiration</div>
+                  <div className="text-xs text-[var(--text-muted)]">On-chain Grant</div>
                   <div className="font-mono text-sm text-[var(--text-primary)] mt-1">
-                    {sessionError ?? 'Expiration unavailable'}
+                    {onChainGranted
+                      ? grantTxHash
+                        ? `Confirmed · ${grantTxHash.slice(0, 10)}…`
+                        : 'Granted (revocable, no expiry)'
+                      : 'Local key only — on-chain grant missing'}
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex flex-col gap-3 pt-2">
                 <div className="text-xs text-[var(--text-secondary)] flex items-center gap-1.5">
                   <Shield className="w-4 h-4 text-[var(--green)]" />
-                  Limited permissions: Can only place binary fills according to your rules. Cannot withdraw funds.
+                  Limited permissions: placeOrderFor + cancelOrderFor only. Cannot withdraw funds.
                 </div>
-                <button onClick={handleRevokeSessionKey} className="btn btn-outline btn-sm !text-[var(--red)] !border-[var(--red)]">
-                  Revoke Session Key
-                </button>
+                {workerNote && (
+                  <p className="text-xs text-[var(--text-muted)] border border-[var(--border)] rounded-lg p-3 bg-[var(--bg-body)]">
+                    {workerNote}
+                  </p>
+                )}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleRevokeSessionKey}
+                    disabled={sessionRevoking}
+                    className="btn btn-outline btn-sm !text-[var(--red)] !border-[var(--red)] disabled:opacity-40"
+                  >
+                    {sessionRevoking ? 'Revoking…' : 'Revoke Session Key'}
+                  </button>
+                </div>
               </div>
+              {sessionError && <p className="text-xs text-[var(--red)]">{sessionError}</p>}
             </div>
           ) : (
             <div className="py-4 space-y-4">
               <p className="text-sm text-[var(--text-secondary)]">
                 Authorize an ephemeral session key so Followdot can automatically mirror whale trades in real-time when you are offline.
+                MetaMask will prompt you to approve <span className="font-mono text-xs">placeOrderFor</span> /{' '}
+                <span className="font-mono text-xs">cancelOrderFor</span> on the DreamDEX OperatorPermissionsRegistry.
               </p>
-              <button onClick={handleGrantSessionKey} disabled={sessionGranting} className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${sessionGranting ? 'btn-outline' : 'btn-accent'}`}>
+              <button
+                onClick={handleGrantSessionKey}
+                disabled={sessionGranting || !walletClient}
+                className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${sessionGranting ? 'btn-outline' : 'btn-accent'}`}
+              >
                 <Key className="w-4 h-4 mr-2" />
-                {sessionGranting ? 'Authorizing…' : 'Authorize DreamDEX Session Key'}
+                {sessionGranting ? 'Authorizing… (check wallet)' : 'Authorize DreamDEX Session Key'}
               </button>
               {sessionError && <p className="text-xs text-[var(--red)]">{sessionError}</p>}
             </div>
