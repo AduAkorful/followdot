@@ -66,9 +66,15 @@ export default function ClaimPage() {
           {totalEstPayout > 0 ? `$${totalEstPayout.toFixed(2)}` : '$0.00'}
         </div>
         <p className="claim-subtitle">
-          {totalClaimableCount > 0
-            ? `You have ${totalClaimableCount} settled market positions ready for redemption.`
-            : 'All winning outcome tokens have been fully redeemed into your wallet.'}
+          {!isConnected
+            ? 'Connect your wallet to check claimable winnings.'
+            : isError
+              ? 'Unable to load claimable positions right now.'
+              : isLoading
+                ? 'Checking settled markets for claimable positions…'
+                : totalClaimableCount > 0
+                  ? `You have ${totalClaimableCount} settled market positions ready for redemption.`
+                  : 'No claimable positions for this wallet.'}
         </p>
 
         {isConnected ? (
@@ -132,7 +138,7 @@ export default function ClaimPage() {
           </div>
         ) : positions.length === 0 ? (
           <div className="card text-center py-16 text-[var(--text-muted)]">
-            No claimable winnings. All settled prediction markets have been redeemed.
+            No claimable positions returned by getClaimable for this wallet.
           </div>
         ) : (
           <div className="grid-2">

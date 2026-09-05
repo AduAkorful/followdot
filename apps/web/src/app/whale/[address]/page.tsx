@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useWhaleProfile } from '@/hooks/use-whale-profile';
+import { useWhaleProfile, useWhaleProfileAnalytics } from '@/hooks/use-whale-profile';
+import { mergeWhaleProfile } from '@/lib/whale-profile';
 import { useCopyOrder } from '@/hooks/use-copy-order';
 import { CopyOrderModal } from '@/components/copy-order-modal';
 import { EquityCurve } from '@/components/equity-curve';
@@ -35,7 +36,11 @@ export default function WhaleProfile() {
   const params = useParams<{ address: string }>();
   const searchParams = useSearchParams();
   const address = params?.address ?? '';
-  const { data, isLoading, isError, error } = useWhaleProfile(address);
+  const { data: coreData, isLoading, isError, error } = useWhaleProfile(address);
+  const { data: analytics } = useWhaleProfileAnalytics(address, !!coreData);
+  const data = coreData
+    ? mergeWhaleProfile(coreData, analytics ?? null)
+    : undefined;
 
   const rankFromQuery = Number(searchParams?.get('rank') ?? '');
   const totalFromQuery = Number(searchParams?.get('total') ?? '');

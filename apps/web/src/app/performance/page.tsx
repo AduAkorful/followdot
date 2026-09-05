@@ -2,8 +2,6 @@
 
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
-import { Sparkline } from '@/components/sparkline';
-import { EquityCurve } from '@/components/equity-curve';
 import { ManagePositionModal } from '@/components/manage-position-modal';
 import { Pagination } from '@/components/pagination';
 import { ConnectButton } from '@/components/connect-button';
@@ -53,60 +51,64 @@ export default function PerformancePage() {
         </p>
       </div>
 
-      {/* KPI Stats Row */}
-      <div className="stats-row animate-in delay-1">
-        <div className="stat-card">
-          <div className="stat-label">Total Realized PnL</div>
-          <div className="stat-row">
-            <div className="stat-value text-[var(--accent)]">$0.00</div>
-            <span className="stat-trend up">0%</span>
-          </div>
-          <Sparkline trend="up" height={32} id="perf1" />
+      {/* KPI Stats Row — gated: no fake Live/Active zeros while disconnected */}
+      {!isConnected ? (
+        <div className="card animate-in delay-1 text-center py-12">
+          <p className="text-[var(--text-secondary)] mb-4">
+            Connect your wallet to load live performance from your copy fills.
+          </p>
+          <ConnectButton />
         </div>
-
-        <div className="stat-card">
-          <div className="stat-label">Copy Win Rate</div>
-          <div className="stat-row">
-            <div className="stat-value">
-              0<span className="text-base text-[var(--text-muted)]">%</span>
+      ) : (
+        <>
+          <div className="stats-row animate-in delay-1">
+            <div className="stat-card">
+              <div className="stat-label">Total Realized PnL</div>
+              <div className="stat-row">
+                <div className="stat-value text-[var(--text-secondary)]">—</div>
+              </div>
+              <p className="text-xs text-[var(--text-muted)] mt-2">No copy fills indexed yet</p>
             </div>
-            <span className="stat-trend up">0%</span>
-          </div>
-          <Sparkline trend="up" height={32} id="perf2" />
-        </div>
 
-        <div className="stat-card">
-          <div className="stat-label">Active Copied Positions</div>
-          <div className="stat-row">
-            <div className="stat-value">{activePositions.length}</div>
-            <span className="stat-trend up">0</span>
-          </div>
-          <Sparkline trend="up" height={32} id="perf3" />
-        </div>
+            <div className="stat-card">
+              <div className="stat-label">Copy Win Rate</div>
+              <div className="stat-row">
+                <div className="stat-value text-[var(--text-secondary)]">—</div>
+              </div>
+              <p className="text-xs text-[var(--text-muted)] mt-2">Awaiting settled copy trades</p>
+            </div>
 
-        <div className="stat-card">
-          <div className="stat-label">Whales Monitored</div>
-          <div className="stat-row">
-            <div className="stat-value">0</div>
-            <span className="stat-trend up">Active</span>
-          </div>
-          <Sparkline trend="up" height={32} id="perf4" />
-        </div>
-      </div>
+            <div className="stat-card">
+              <div className="stat-label">Active Copied Positions</div>
+              <div className="stat-row">
+                <div className="stat-value">{activePositions.length}</div>
+              </div>
+              <p className="text-xs text-[var(--text-muted)] mt-2">From live wallet portfolio</p>
+            </div>
 
-      {/* Copied Portfolio Growth SVG Equity Curve Chart */}
-      <div className="card animate-in delay-2">
-        <div className="card-header flex flex-row items-center justify-between">
-          <div>
-            <h3 className="card-title">Copied Portfolio Growth</h3>
-            <p className="card-desc">Cumulative PnL across all executed copy orders</p>
+            <div className="stat-card">
+              <div className="stat-label">Whales Monitored</div>
+              <div className="stat-row">
+                <div className="stat-value text-[var(--text-secondary)]">—</div>
+              </div>
+              <p className="text-xs text-[var(--text-muted)] mt-2">No follow rules loaded</p>
+            </div>
           </div>
-          <span className="badge badge-accent">Live Feed</span>
-        </div>
-        <div className="card-body mt-2">
-          <EquityCurve height={220} chartId="portfolioGrowth" />
-        </div>
-      </div>
+
+          <div className="card animate-in delay-2">
+            <div className="card-header flex flex-row items-center justify-between">
+              <div>
+                <h3 className="card-title">Copied Portfolio Growth</h3>
+                <p className="card-desc">Cumulative PnL across all executed copy orders</p>
+              </div>
+              <span className="badge badge-outline">No data</span>
+            </div>
+            <div className="card-body mt-2 text-center py-10 text-[var(--text-muted)] text-sm">
+              Equity curve appears after live copy fills are available for this wallet.
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Copied Trade History Table */}
       <div className="card animate-in delay-3">

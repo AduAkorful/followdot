@@ -2,6 +2,9 @@
  * Whale profile data — fetches detailed per-whale data: trade history,
  * open positions, skill-scored market breakdown, edge-at-entry (F7),
  * and probability calibration (F8).
+ *
+ * Critical path (KPIs): score + marketPnL + fills + openPositions.
+ * Heavy F7/F8 work is in fetchWhaleProfileAnalytics (lazy / off critical path).
  */
 import {
   computeSkillScore,
@@ -10,6 +13,7 @@ import {
   ewmaVolatility,
   buildCalibrationBuckets,
   computeCalibrationScore,
+  isMarketWin,
   type MarketResult,
   type SkillScoreResult,
   type CalibrationResult,
@@ -18,6 +22,7 @@ import {
 import {
   fetchTraderFills,
   fetchResolvedMarkets,
+  fetchMarketsForFillIds,
   fetchMarketOpeningPrice,
   fetchMarkPriceHistory,
   fetchTraderOpenPositions,
@@ -33,6 +38,7 @@ export interface WhaleMarketPnL {
   pnl: number;
   isUp: boolean;
   tradeCount: number;
+  won?: boolean;
 }
 
 export interface MarketTypeWinRate {
@@ -52,7 +58,7 @@ export interface EdgeAtEntry {
   unavailableReason?: string;
 }
 
-export interface WhaleProfileData {
+export interface WhaleProfileCore {
   address: string;
   /** Position in the leaderboard (1 = top). Optional: derived from URL params at the page level. */
   rank?: number;
@@ -73,6 +79,16 @@ export interface WhaleProfileData {
     quoteDecimals: number;
   }>;
   winRateByMarketType: MarketTypeWinRate[];
+}
+
+export interface WhaleProfileAnalytics {
+  address: string;
+  edges: EdgeAtEntry[];
+  calibration: CalibrationResult | null;
+  calibrationByMarketType: Record<string, CalibrationResult>;
+}
+
+export interface WhaleProfileData extends WhaleProfileCore {
   /** F7: edge at entry per fill, keyed by fill.id */
   edges: Map<string, EdgeAtEntry>;
   /** F8: calibration result across all fills */
@@ -81,21 +97,10 @@ export interface WhaleProfileData {
   calibrationByMarketType: Map<string, CalibrationResult>;
 }
 
-/** Fetch detailed profile data for a single whale address. */
-export async function fetchWhaleProfile(
-  address: string,
-  signal?: AbortSignal,
-): Promise<WhaleProfileData> {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
-    throw new Error("Invalid wallet address format");
-  }
-
-  const normalizedAddr = address.toLowerCase();
-
-  const markets = await fetchResolvedMarkets(signal);
-  const marketMap = buildMarketMap(markets);
-  const fills = await fetchTraderFills(normalizedAddr, 1000, signal);
-  const openPositions = (await fetchTraderOpenPositions(normalizedAddr)).flatMap((position) => {
+function mapOpenPositions(
+  positions: Awaited<ReturnType<typeof fetchTraderOpenPositions>>,
+) {
+  return positions.flatMap((position) => {
     const decimals = position.market.quoteDecimals;
     const yesHeld = position.balanceYes > 0n;
     const noHeld = position.balanceNo > 0n;
@@ -114,6 +119,32 @@ export async function fetchWhaleProfile(
       quoteDecimals: decimals,
     };
   });
+}
+
+/** Critical-path profile: KPIs without sequential edge RPCs. */
+export async function fetchWhaleProfileCore(
+  address: string,
+  signal?: AbortSignal,
+): Promise<WhaleProfileCore> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    throw new Error("Invalid wallet address format");
+  }
+
+  const normalizedAddr = address.toLowerCase();
+
+  const [resolvedMarkets, fills, rawOpenPositions] = await Promise.all([
+    fetchResolvedMarkets(signal),
+    fetchTraderFills(normalizedAddr, 1000, signal),
+    fetchTraderOpenPositions(normalizedAddr),
+  ]);
+  const openPositions = mapOpenPositions(rawOpenPositions);
+
+  const baseMap = buildMarketMap(resolvedMarkets);
+  const marketMap = await fetchMarketsForFillIds(
+    fills.map((f) => f.market),
+    baseMap,
+    signal,
+  );
 
   if (fills.length === 0) {
     const emptyScore = computeSkillScore({
@@ -127,9 +158,6 @@ export async function fetchWhaleProfile(
       fills: [],
       openPositions,
       winRateByMarketType: [],
-      edges: new Map(),
-      calibration: null,
-      calibrationByMarketType: new Map(),
     };
   }
 
@@ -145,6 +173,7 @@ export async function fetchWhaleProfile(
     marketType: r.marketType,
     pnl: r.pnl,
     isUp: r.isUp,
+    ...(r.won !== undefined ? { won: r.won } : {}),
   }));
 
   const score = computeSkillScore({
@@ -152,12 +181,11 @@ export async function fetchWhaleProfile(
     settledMarkets: marketResults,
   });
 
-  // Build win-rate-by-market-type breakdown
   const buckets = new Map<string, { wins: number; total: number }>();
   for (const r of marketResults) {
     const existing = buckets.get(r.marketType) ?? { wins: 0, total: 0 };
     existing.total++;
-    if (r.pnl >= 0) existing.wins++;
+    if (isMarketWin(r)) existing.wins++;
     buckets.set(r.marketType, existing);
   }
   const winRateByMarketType = [...buckets.entries()].map(([marketType, b]) => ({
@@ -167,11 +195,39 @@ export async function fetchWhaleProfile(
     winRate: b.total > 0 ? b.wins / b.total : 0,
   }));
 
-  // F7: Compute edge at entry for each fill
-  const edges = await computeEdges(fills, marketMap, signal);
+  return {
+    address: normalizedAddr,
+    score,
+    marketPnL,
+    fills,
+    openPositions,
+    winRateByMarketType,
+  };
+}
 
-  // F8: Compute calibration (overall + per-market-type)
-  // Each fill contributes its implied probability (fillPrice) and resolution outcome
+/** Lazy F7/F8 analytics — keep off the KPI critical path. */
+export async function fetchWhaleProfileAnalytics(
+  address: string,
+  signal?: AbortSignal,
+): Promise<WhaleProfileAnalytics> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    throw new Error("Invalid wallet address format");
+  }
+  const normalizedAddr = address.toLowerCase();
+  const [resolvedMarkets, fills] = await Promise.all([
+    fetchResolvedMarkets(signal),
+    fetchTraderFills(normalizedAddr, 1000, signal),
+  ]);
+  const baseMap = buildMarketMap(resolvedMarkets);
+  const marketMap = await fetchMarketsForFillIds(
+    fills.map((f) => f.market),
+    baseMap,
+    signal,
+  );
+
+  const edgesMap = await computeEdges(fills, marketMap, signal);
+  const edges = [...edgesMap.values()];
+
   const calibrationFills = fills.flatMap((f) => {
     const market = marketMap.get(f.market.toLowerCase());
     const fillSide = f.takerSide ?? f.takerOrder?.side;
@@ -190,7 +246,6 @@ export async function fetchWhaleProfile(
     }];
   });
 
-  // Overall calibration
   const overallBuckets = buildCalibrationBuckets(calibrationFills) as CalibrationBucket[];
   const overallMAD =
     overallBuckets.length === 0
@@ -203,8 +258,7 @@ export async function fetchWhaleProfile(
     meanAbsDeviation: overallMAD,
   };
 
-  // Per-market-type calibration
-  const calibrationByMarketType = new Map<string, CalibrationResult>();
+  const calibrationByMarketType: Record<string, CalibrationResult> = {};
   const typeBuckets = buildCalibrationBuckets(calibrationFills, { byMarketType: true });
   if (typeBuckets instanceof Map) {
     for (const [marketType, buckets] of typeBuckets) {
@@ -214,39 +268,54 @@ export async function fetchWhaleProfile(
           sum + Math.abs(b.actualWinRate - b.midpoint),
         0,
       ) / buckets.length;
-      calibrationByMarketType.set(marketType, {
+      calibrationByMarketType[marketType] = {
         score: computeCalibrationScore(buckets),
         buckets,
         meanAbsDeviation: mad,
-      });
+      };
     }
   }
 
   return {
     address: normalizedAddr,
-    score,
-    marketPnL,
-    fills,
-    openPositions,
-    winRateByMarketType,
     edges,
     calibration,
-    calibrationByMarketType: calibrationByMarketType,
+    calibrationByMarketType,
+  };
+}
+
+/** Full profile (core + analytics). Prefer split fetch for UI critical path. */
+export async function fetchWhaleProfile(
+  address: string,
+  signal?: AbortSignal,
+): Promise<WhaleProfileData> {
+  const core = await fetchWhaleProfileCore(address, signal);
+  const analytics = await fetchWhaleProfileAnalytics(address, signal);
+  return mergeWhaleProfile(core, analytics);
+}
+
+export function mergeWhaleProfile(
+  core: WhaleProfileCore | WhaleProfileData,
+  analytics?: WhaleProfileAnalytics | null,
+): WhaleProfileData {
+  const edges = new Map<string, EdgeAtEntry>();
+  const calibrationByMarketType = new Map<string, CalibrationResult>();
+  if (analytics) {
+    for (const e of analytics.edges) edges.set(e.fillId, e);
+    for (const [k, v] of Object.entries(analytics.calibrationByMarketType)) {
+      calibrationByMarketType.set(k, v);
+    }
+  }
+  return {
+    ...core,
+    edges,
+    calibration: analytics?.calibration ?? null,
+    calibrationByMarketType,
   };
 }
 
 /**
  * Compute edge at entry for each fill (F7).
- *
- * For each fill:
- * 1. Get S0 (opening price) from getOpeningPrices or BinaryMarket metadata
- * 2. Get sigma (EWMA volatility) from candle close prices
- * 3. Compute tau (time to expiry at fill time) from market expiry
- * 4. Compute fairValue = computeFairValue(S0, fillPrice, sigma, tau)
- * 5. Compute edgeBps = computeEdgeBps(fillPrice, fairValue)
- *
- * If live inputs are unavailable, the edge remains unavailable. No guessed
- * probability is substituted.
  */
 async function computeEdges(
   fills: FillRow[],
@@ -283,12 +352,10 @@ async function computeEdges(
     result.fillPrice = selectedFillPrice;
 
     try {
-      // Opening and fill prices are raw YES probabilities in the SDK.
       const openingPriceRaw = await fetchMarketOpeningPrice(fill.market);
       const openingYes = openingPriceRaw === null ? null : openingPriceRaw / scale;
       const S0 = openingYes === null ? null : (isNoSide ? 1 - openingYes : openingYes);
 
-      // sigma: EWMA volatility from candle close prices
       const intervalSec = market.intervalSec ? Number(market.intervalSec) : null;
       if (!intervalSec || intervalSec <= 0) {
         result.unavailableReason = "Market interval unavailable";
@@ -308,13 +375,11 @@ async function computeEdges(
         return isNoSide ? 1 - yesPrice : yesPrice;
       });
 
-      // tau: time to expiry at fill (seconds → years)
       const tauSeconds = market.expiry && fill.timestamp
         ? Number(market.expiry) - Number(fill.timestamp)
         : null;
       const tauYears = tauSeconds !== null && tauSeconds > 0 ? tauSeconds / (365 * 24 * 3600) : null;
 
-      // Compute fair value
       let fairValue: number | null = null;
       let edgeBps: number | null = null;
       if (S0 !== null && S0 > 0 && priceHistory.length > 0) {
