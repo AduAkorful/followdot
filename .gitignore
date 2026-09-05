@@ -33,3 +33,6 @@ Thumbs.db
 AGENTS.md
 plans/
 docs/
+
+# local QA artifacts
+.qa/
