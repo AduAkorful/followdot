@@ -604,7 +604,7 @@ export async function computeSkillScores(
  * Subscribes to each whale's fill events and buffers new fills into KV.
  */
 export async function pollWhaleFills(
-  sdk: SomniaMarkets,
+  _sdk: SomniaMarkets,
   whaleKV: KVNamespace,
   fillsKV: KVNamespace,
 ): Promise<void> {
