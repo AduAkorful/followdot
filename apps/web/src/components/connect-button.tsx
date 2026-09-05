@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -87,13 +88,15 @@ export function ConnectButton() {
         <ChevronDown className="h-3 w-3 opacity-50" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>
-          <div className="flex flex-col space-y-1">
-            <span className="text-xs text-muted-foreground">Connected Wallet</span>
-            <span className="text-sm font-mono font-medium">{address ? shortenAddress(address) : ''}</span>
-            <span className="text-[10px] text-[var(--accent)] font-medium">Somnia Testnet (50312)</span>
-          </div>
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            <div className="flex flex-col space-y-1">
+              <span className="text-xs text-muted-foreground">Connected Wallet</span>
+              <span className="text-sm font-mono font-medium">{address ? shortenAddress(address) : ''}</span>
+              <span className="text-[10px] text-[var(--accent)] font-medium">Somnia Testnet (50312)</span>
+            </div>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={copyAddress} className="cursor-pointer">
           {copied ? <Check className="mr-2 h-4 w-4 text-[var(--accent)]" /> : <Copy className="mr-2 h-4 w-4" />}
