@@ -8,15 +8,22 @@ import { useWalletSession } from '@/hooks/use-wallet-session';
 import { useWalletPortfolio } from '@/hooks/use-portfolio';
 import { Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
+import {
+  formatOpenPositionMoney,
+  formatSharesHuman,
+  mapHonestOpenPositionMoney,
+} from '@/lib/open-position-display';
 
 interface PositionItem {
   marketId: string;
   title: string;
   whaleAddress: string | null;
   outcome: string;
-  stake: number;
+  stake: number | null;
+  shares: number;
   currentValue: number;
-  pnl: number;
+  pnl: number | null;
+  costBasisUnknown: boolean;
   timestamp: string;
   status: 'OPEN' | 'SETTLED';
 }
@@ -43,12 +50,9 @@ export default function PerformancePage() {
   const activePositions: PositionItem[] = useMemo(() => {
     if (!portfolio?.positions?.length) return [];
     return portfolio.positions.flatMap((position) => {
-      const decimals = position.market.quoteDecimals;
-      if (!Number.isInteger(decimals) || decimals < 0) return [];
+      const money = mapHonestOpenPositionMoney(position);
+      if (!money) return [];
       const yesHeld = position.balanceYes > 0n;
-      const noHeld = position.balanceNo > 0n;
-      if (yesHeld === noHeld) return [];
-      const scale = 10 ** decimals;
       return [{
         marketId: position.market.id,
         title: position.market.question
@@ -57,9 +61,11 @@ export default function PerformancePage() {
             : shorten(position.market.marketAddress || position.market.id)),
         whaleAddress: null,
         outcome: yesHeld ? 'YES' : 'NO',
-        stake: Number(position.costBasis) / scale,
-        currentValue: Number(position.markValue) / scale,
-        pnl: Number(position.unrealizedPnl) / scale,
+        stake: money.stakeHuman,
+        shares: money.sharesHuman,
+        currentValue: money.markHuman,
+        pnl: money.unrealizedPnlHuman,
+        costBasisUnknown: money.costBasisUnknown,
         timestamp: position.market.expiry ?? '',
         status: 'OPEN' as const,
       }];
@@ -68,7 +74,11 @@ export default function PerformancePage() {
 
   const fillCount = portfolio?.fills?.length ?? 0;
   const hasAnyActivity = activePositions.length > 0 || fillCount > 0;
-  const totalUnrealized = activePositions.reduce((sum, p) => sum + p.pnl, 0);
+  const totalUnrealized = activePositions.reduce(
+    (sum, p) => sum + (p.pnl ?? 0),
+    0,
+  );
+  const hasUnknownCostBasis = activePositions.some((p) => p.costBasisUnknown);
 
   const totalEntries = activePositions.length;
   const paginatedPositions = activePositions.slice(
@@ -114,21 +124,23 @@ export default function PerformancePage() {
               <div className="stat-label">Open Unrealized PnL</div>
               <div className="stat-row">
                 <div className={`stat-value ${
-                  !hasAnyActivity
+                  !hasAnyActivity || (hasUnknownCostBasis && activePositions.every((pos) => pos.pnl === null))
                     ? 'text-[var(--text-secondary)]'
                     : totalUnrealized >= 0
                       ? 'text-[var(--green)]'
                       : 'text-[var(--red)]'
                 }`}>
-                  {!hasAnyActivity
+                  {!hasAnyActivity || (hasUnknownCostBasis && activePositions.every((pos) => pos.pnl === null))
                     ? '—'
                     : `${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toFixed(2)}`}
                 </div>
               </div>
               <p className="text-xs text-[var(--text-muted)] mt-2">
-                {hasAnyActivity
-                  ? 'From live open positions'
-                  : 'No copied trades yet'}
+                {!hasAnyActivity
+                  ? 'No copied trades yet'
+                  : hasUnknownCostBasis
+                    ? 'Some stakes unavailable (incomplete cost basis)'
+                    : 'From live open positions'}
               </p>
             </div>
 
@@ -231,6 +243,7 @@ export default function PerformancePage() {
                     <th>Market</th>
                     <th>Whale</th>
                     <th>Outcome</th>
+                    <th className="right">Shares</th>
                     <th className="right">Stake</th>
                     <th className="right">Current Value</th>
                     <th className="right">PnL</th>
@@ -240,7 +253,7 @@ export default function PerformancePage() {
                 </thead>
                 <tbody>
                   {paginatedPositions.map((pos) => {
-                    const isPositive = pos.pnl >= 0;
+                    const isPositive = pos.pnl !== null && pos.pnl >= 0;
                     return (
                       <tr key={pos.marketId}>
                         <td className="font-medium">{pos.title}</td>
@@ -256,10 +269,18 @@ export default function PerformancePage() {
                         <td>
                           <span className="badge badge-accent">{pos.outcome}</span>
                         </td>
-                        <td className="right mono">${pos.stake.toFixed(2)}</td>
-                        <td className="right mono">${pos.currentValue.toFixed(2)}</td>
-                        <td className={`right mono font-semibold ${isPositive ? 'green' : 'red'}`}>
-                          {isPositive ? '+' : ''}${pos.pnl.toFixed(2)}
+                        <td className="right mono">{formatSharesHuman(pos.shares)}</td>
+                        <td
+                          className="right mono"
+                          title={pos.costBasisUnknown ? 'Cost basis unavailable (incomplete fill reconstruction)' : undefined}
+                        >
+                          {formatOpenPositionMoney(pos.stake)}
+                        </td>
+                        <td className="right mono">{formatOpenPositionMoney(pos.currentValue)}</td>
+                        <td className={`right mono font-semibold ${
+                          pos.pnl === null ? '' : isPositive ? 'green' : 'red'
+                        }`}>
+                          {formatOpenPositionMoney(pos.pnl, { signed: true })}
                         </td>
                         <td className="right">
                           <span className="badge badge-outline">{pos.status}</span>

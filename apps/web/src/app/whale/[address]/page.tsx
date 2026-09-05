@@ -17,6 +17,10 @@ import {
   formatFillQuantity,
   resolveFillQuoteDecimals,
 } from '@/lib/format-fill';
+import {
+  formatOpenPositionMoney,
+  formatSharesHuman,
+} from '@/lib/open-position-display';
 
 function shortenAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -396,6 +400,8 @@ export default function WhaleProfile() {
                   <th>Market</th>
                   <th>Type</th>
                   <th>Side</th>
+                  <th className="right">Shares</th>
+                  <th className="right">Mark</th>
                   <th className="right">Stake</th>
                   <th className="right">Unrealized PnL</th>
                   <th className="right">Action</th>
@@ -407,9 +413,22 @@ export default function WhaleProfile() {
                     <td className="mono text-xs">{shortenAddress(position.marketAddress)}</td>
                     <td><span className="badge badge-outline">{position.marketType}</span></td>
                     <td><span className="badge badge-accent">{position.side}</span></td>
-                    <td className="right mono">${position.stakeHuman.toFixed(2)}</td>
-                    <td className={`right mono font-semibold ${position.unrealizedPnlHuman >= 0 ? 'green' : 'red'}`}>
-                      {formatPnL(position.unrealizedPnlHuman)}
+                    <td className="right mono">{formatSharesHuman(position.sharesHuman)}</td>
+                    <td className="right mono">{formatOpenPositionMoney(position.currentValueHuman)}</td>
+                    <td
+                      className="right mono"
+                      title={position.costBasisUnknown ? 'Cost basis unavailable (incomplete fill reconstruction)' : undefined}
+                    >
+                      {formatOpenPositionMoney(position.stakeHuman)}
+                    </td>
+                    <td className={`right mono font-semibold ${
+                      position.unrealizedPnlHuman === null
+                        ? ''
+                        : position.unrealizedPnlHuman >= 0 ? 'green' : 'red'
+                    }`}>
+                      {position.unrealizedPnlHuman === null
+                        ? '—'
+                        : formatPnL(position.unrealizedPnlHuman)}
                     </td>
                     <td className="right">
                       <button

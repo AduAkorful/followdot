@@ -30,6 +30,7 @@ import {
   computePerMarketPnL,
 } from "./dreamdex";
 import type { FillRow, BinaryMarket } from "@somnia-chain/markets-sdk";
+import { mapHonestOpenPositionMoney } from "./open-position-display";
 
 export interface WhaleMarketPnL {
   marketId: string;
@@ -76,9 +77,13 @@ export interface WhaleProfileCore {
     marketAddress: string;
     marketType: string;
     side: "BUY_YES" | "BUY_NO";
-    stakeHuman: number;
+    /** Cost basis when reconstructed; null if shares held but costBasis incomplete. */
+    stakeHuman: number | null;
+    sharesHuman: number;
     currentValueHuman: number;
-    unrealizedPnlHuman: number;
+    /** null when stake/cost basis unknown (do not treat mark as fake profit). */
+    unrealizedPnlHuman: number | null;
+    costBasisUnknown: boolean;
     quoteDecimals: number;
   }>;
   winRateByMarketType: MarketTypeWinRate[];
@@ -117,10 +122,9 @@ function mapOpenPositions(
   positions: Awaited<ReturnType<typeof fetchTraderOpenPositions>>,
 ) {
   return positions.flatMap((position) => {
-    const decimals = position.market.quoteDecimals;
+    const money = mapHonestOpenPositionMoney(position);
+    if (!money) return [];
     const yesHeld = position.balanceYes > 0n;
-    const noHeld = position.balanceNo > 0n;
-    if (yesHeld === noHeld || !Number.isInteger(decimals)) return [];
     return {
       marketId: position.market.id,
       // placeCopyOrder looks up by BinaryMarket.marketAddress (clone), NOT poolAddress
@@ -130,10 +134,12 @@ function mapOpenPositions(
         ? `${position.market.asset}_${position.market.interval}`
         : "unavailable",
       side: yesHeld ? "BUY_YES" as const : "BUY_NO" as const,
-      stakeHuman: Number(position.costBasis) / 10 ** decimals,
-      currentValueHuman: Number(position.markValue) / 10 ** decimals,
-      unrealizedPnlHuman: Number(position.unrealizedPnl) / 10 ** decimals,
-      quoteDecimals: decimals,
+      stakeHuman: money.stakeHuman,
+      sharesHuman: money.sharesHuman,
+      currentValueHuman: money.markHuman,
+      unrealizedPnlHuman: money.unrealizedPnlHuman,
+      costBasisUnknown: money.costBasisUnknown,
+      quoteDecimals: position.market.quoteDecimals,
     };
   });
 }

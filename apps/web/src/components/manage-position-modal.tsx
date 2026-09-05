@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertTriangle } from 'lucide-react';
+import { formatOpenPositionMoney } from '@/lib/open-position-display';
 
 interface ManagePositionModalProps {
   open: boolean;
@@ -12,9 +13,9 @@ interface ManagePositionModalProps {
     marketId: string;
     title: string;
     outcome: string;
-    stake: number;
+    stake: number | null;
     currentValue: number;
-    pnl: number;
+    pnl: number | null;
   } | null;
   onClosePosition?: (marketId: string) => Promise<void>;
 }
@@ -29,8 +30,7 @@ export function ManagePositionModal({
 
   if (!position) return null;
 
-  const isPositive = position.pnl >= 0;
-  const pnlSign = isPositive ? '+' : '';
+  const isPositive = position.pnl !== null && position.pnl >= 0;
 
   const handleClosePosition = async () => {
     if (isClosing) return;
@@ -62,13 +62,17 @@ export function ManagePositionModal({
             <div>
               <div className="text-xs text-[var(--text-muted)]">Side & Stake</div>
               <div className="font-mono text-sm font-semibold mt-1">
-                <span className="text-[var(--accent)]">{position.outcome}</span> · ${position.stake.toFixed(2)}
+                <span className="text-[var(--accent)]">{position.outcome}</span> · {formatOpenPositionMoney(position.stake)}
               </div>
             </div>
             <div>
               <div className="text-xs text-[var(--text-muted)]">Unrealized PnL</div>
-              <div className={`font-mono text-sm font-semibold mt-1 ${isPositive ? 'text-[var(--green)]' : 'text-[var(--red)]'}`}>
-                {pnlSign}${position.pnl.toFixed(2)}
+              <div className={`font-mono text-sm font-semibold mt-1 ${
+                position.pnl === null
+                  ? 'text-[var(--text-secondary)]'
+                  : isPositive ? 'text-[var(--green)]' : 'text-[var(--red)]'
+              }`}>
+                {formatOpenPositionMoney(position.pnl, { signed: true })}
               </div>
             </div>
           </div>

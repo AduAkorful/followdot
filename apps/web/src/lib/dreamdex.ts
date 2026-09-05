@@ -20,6 +20,7 @@ import {
 } from "@somnia-chain/markets-sdk";
 import type { Address, Hex } from "viem";
 import { somniaChain, INDEXER_URL } from "../config/somnia";
+import { exposureHumanFromOpenPosition } from "./open-position-display";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_RESOLVED_PAGES = 10; // browser/API budget — ~2k past markets
@@ -563,7 +564,7 @@ export async function fetchUserExposure(userAddress: string): Promise<number | n
       `getOpenPositionsWithPnL(${userAddress})`,
     );
     return positions.reduce(
-      (total, position) => total + Number(position.costBasis) / 10 ** position.market.quoteDecimals,
+      (total, position) => total + exposureHumanFromOpenPosition(position),
       0,
     );
   } catch (err) {
