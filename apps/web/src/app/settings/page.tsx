@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { ConnectButton } from '@/components/connect-button';
 import { EditRuleModal, AutoCopyRule } from '@/components/edit-rule-modal';
@@ -13,7 +13,9 @@ import { Key, Shield, Pause, Play, Edit3 } from 'lucide-react';
 import Link from 'next/link';
 import {
   classifySessionKeyError,
+  fetchSessionKeyStatus,
   grantDreamDexSessionKey,
+  registerSessionKey,
   setSessionOperatorApproval,
 } from '@/lib/grant-session-key';
 import type { Address } from 'viem';
@@ -47,6 +49,8 @@ export default function SettingsPage() {
 
   const [sessionGranting, setSessionGranting] = useState(false);
   const [sessionRevoking, setSessionRevoking] = useState(false);
+  /** Prevents double-click / overlapping MetaMask grants (duplicate setOperatorApprovalGlobal). */
+  const grantInFlightRef = useRef(false);
 
   const applyStatus = useCallback((data: SessionStatus) => {
     setSessionActive(Boolean(data.active && data.sessionAddress));
@@ -59,23 +63,17 @@ export default function SettingsPage() {
   const refreshSessionStatus = useCallback(async () => {
     if (!address) return;
     try {
-      const res = await fetch(`/api/auth-session-key?wallet=${encodeURIComponent(address)}`, {
-        headers: { 'x-wallet-address': address },
+      const data = await fetchSessionKeyStatus(address);
+      applyStatus({
+        active: Boolean(data.active),
+        sessionAddress: data.sessionAddress,
+        grantTxHash: data.grantTxHash,
+        onChainGranted: Boolean(data.onChainGranted),
+        workerNote: data.workerNote,
       });
-      if (res.status === 404) {
-        setSessionError('Session-key API route is missing (404). Restart the Next.js app.');
-        return;
-      }
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        setSessionError(body?.error ?? `Failed to load session status (${res.status})`);
-        return;
-      }
-      const data = (await res.json()) as SessionStatus;
-      applyStatus(data);
       setSessionError(null);
-    } catch {
-      setSessionError('Could not reach session-key API. Is the web app running?');
+    } catch (err) {
+      setSessionError(classifySessionKeyError(err));
     }
   }, [address, applyStatus]);
 
@@ -113,43 +111,40 @@ export default function SettingsPage() {
   }, [isConnected, address, refreshSessionStatus, refreshFollowRules]);
 
   const handleGrantSessionKey = async () => {
+    if (grantInFlightRef.current || sessionGranting) return;
+    grantInFlightRef.current = true;
     setSessionGranting(true);
     setSessionError(null);
+
+    let onChainSucceeded = false;
+    let grantedAddress: string | null = null;
+    let grantedTx: string | null = null;
+
     try {
       if (!address) throw new Error('Connect your wallet first.');
       if (!walletClient) throw new Error('Wallet client unavailable. Reconnect and try again.');
 
-      // 1) Ephemeral key + MetaMask/on-chain OperatorPermissionsRegistry grant
-      const granted = await grantDreamDexSessionKey({ walletClient });
+      // Already registered locally — do not mint another on-chain grant.
+      if (sessionActive && sessionKeyAddress) {
+        setSessionError('Session key already active. Revoke first to re-authorize.');
+        return;
+      }
 
-      // 2) Persist for local/dev (worker SESSION_KEYS_KV sync is separate)
-      const res = await fetch('/api/auth-session-key', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-wallet-address': address,
-        },
-        body: JSON.stringify({
-          walletAddress: address,
-          sessionAddress: granted.address,
-          sessionKey: granted.privateKey,
-          grantTxHash: granted.grantTxHash,
-          onChainGranted: granted.onChainGranted,
-        }),
+      // 1) Ephemeral key + ONE MetaMask setOperatorApprovalGlobal (both selectors)
+      const granted = await grantDreamDexSessionKey({ walletClient });
+      onChainSucceeded = granted.onChainGranted;
+      grantedAddress = granted.address;
+      grantedTx = granted.grantTxHash;
+
+      // 2) Persist — only mark Active after register succeeds
+      const data = await registerSessionKey(address, {
+        walletAddress: address,
+        sessionAddress: granted.address,
+        sessionKey: granted.privateKey,
+        grantTxHash: granted.grantTxHash,
+        onChainGranted: granted.onChainGranted,
       });
 
-      if (res.status === 404) {
-        throw new Error('Authorization endpoint not available (404)');
-      }
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(
-          body?.error ??
-            `Registration failed (${res.status}). On-chain grant may have succeeded — check MetaMask activity.`,
-        );
-      }
-
-      const data = (await res.json()) as SessionStatus & { address?: string };
       applyStatus({
         active: true,
         sessionAddress: data.address ?? data.sessionAddress ?? granted.address,
@@ -157,11 +152,24 @@ export default function SettingsPage() {
         onChainGranted: data.onChainGranted ?? granted.onChainGranted,
         workerNote: data.workerNote,
       });
+      setSessionError(null);
     } catch (err) {
-      setSessionError(classifySessionKeyError(err));
-      // Do not mark active on failure — refresh in case a prior key exists
+      const classified = classifySessionKeyError(err);
+      if (onChainSucceeded) {
+        setSessionError(
+          `${classified} On-chain approval landed` +
+            (grantedTx ? ` (${grantedTx.slice(0, 10)}…)` : '') +
+            (grantedAddress ? ` for ${grantedAddress.slice(0, 8)}…` : '') +
+            ' but local registration did not complete — UI stays inactive. Retry Authorize only after checking MetaMask; avoid duplicate grants.',
+        );
+        // Explicitly stay inactive until register succeeds
+        setSessionActive(false);
+      } else {
+        setSessionError(classified);
+      }
       await refreshSessionStatus();
     } finally {
+      grantInFlightRef.current = false;
       setSessionGranting(false);
     }
   };
@@ -330,11 +338,11 @@ export default function SettingsPage() {
             <div className="py-4 space-y-4">
               <p className="text-sm text-[var(--text-secondary)]">
                 Authorize an ephemeral session key so Followdot can automatically mirror whale trades in real-time when you are offline.
-                MetaMask will prompt you to approve <span className="font-mono text-xs">placeOrderFor</span> /{' '}
+                MetaMask will prompt once to approve <span className="font-mono text-xs">placeOrderFor</span> /{' '}
                 <span className="font-mono text-xs">cancelOrderFor</span> on the DreamDEX OperatorPermissionsRegistry.
               </p>
               <button
-                onClick={handleGrantSessionKey}
+                onClick={() => void handleGrantSessionKey()}
                 disabled={sessionGranting || !walletClient}
                 className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${sessionGranting ? 'btn-outline' : 'btn-accent'}`}
               >

@@ -50,7 +50,10 @@ export async function GET(request: NextRequest) {
  * POST /api/auth-session-key
  * Registers an ephemeral session key after (or without) on-chain grant.
  *
- * Body: { walletAddress, sessionAddress, sessionKey, grantTxHash?, onChainGranted }
+ * Body (preferred):
+ *   { walletAddress, sessionAddress, sessionKey, grantTxHash?, onChainGranted }
+ * Aliases accepted:
+ *   address → sessionAddress, privateKey → sessionKey
  */
 export async function POST(request: NextRequest) {
   let body: unknown;
@@ -62,8 +65,14 @@ export async function POST(request: NextRequest) {
 
   const b = body as Record<string, unknown>;
   const walletAddress = typeof b.walletAddress === "string" ? b.walletAddress : "";
-  const sessionAddress = typeof b.sessionAddress === "string" ? b.sessionAddress : "";
-  const sessionKey = typeof b.sessionKey === "string" ? b.sessionKey : "";
+  const sessionAddress =
+    (typeof b.sessionAddress === "string" && b.sessionAddress) ||
+    (typeof b.address === "string" && b.address) ||
+    "";
+  const sessionKey =
+    (typeof b.sessionKey === "string" && b.sessionKey) ||
+    (typeof b.privateKey === "string" && b.privateKey) ||
+    "";
   const grantTxHash =
     typeof b.grantTxHash === "string" && b.grantTxHash.startsWith("0x")
       ? b.grantTxHash
@@ -71,7 +80,12 @@ export async function POST(request: NextRequest) {
   const onChainGranted = Boolean(b.onChainGranted);
 
   const headerWallet = request.headers.get("x-wallet-address")?.trim();
-  if (headerWallet && isAddress(headerWallet) && headerWallet.toLowerCase() !== walletAddress.toLowerCase()) {
+  if (
+    headerWallet &&
+    isAddress(headerWallet) &&
+    walletAddress &&
+    headerWallet.toLowerCase() !== walletAddress.toLowerCase()
+  ) {
     return NextResponse.json(
       { error: "x-wallet-address does not match body.walletAddress" },
       { status: 403 },
@@ -82,7 +96,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "walletAddress, sessionAddress (0x+40 hex), and sessionKey (0x+64 hex) are required",
+          "walletAddress, sessionAddress/address (0x+40 hex), and sessionKey/privateKey (0x+64 hex) are required",
       },
       { status: 400 },
     );
