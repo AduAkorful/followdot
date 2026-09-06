@@ -136,7 +136,7 @@ export default function PerformancePage() {
   );
   const hasUnknownCostBasis = activePositions.some((p) => p.costBasisUnknown);
 
-  // Same source Settings uses — local /api/follow-rules file store.
+  // Same source Settings uses — /api/follow-rules (KV or local file store).
   const followRulesQuery = useQuery({
     queryKey: [FOLLOW_RULES_QUERY_KEY, address],
     queryFn: () => fetchFollowRules(address!),

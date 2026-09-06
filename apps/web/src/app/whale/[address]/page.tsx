@@ -352,7 +352,7 @@ export default function WhaleProfile() {
               title={
                 existingRule?.status === 'ACTIVE'
                   ? 'Already following — edit the rule in Settings'
-                  : 'Save an Auto-Follow rule (persists locally; session key still required for worker copies)'
+                  : 'Save an Auto-Follow rule (durable store / KV; session key still required for worker copies)'
               }
               className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${
                 existingRule?.status === 'ACTIVE' ? 'btn-outline' : 'btn-accent'

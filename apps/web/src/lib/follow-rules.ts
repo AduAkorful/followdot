@@ -1,7 +1,9 @@
 /**
  * Follow / auto-copy rules shared by Settings, Performance, and whale Auto-Follow.
  *
- * Persistence: local Next.js API → `.data/follow-rules.json` (see follow-rules-store).
+ * Persistence: Next.js API → Upstash/Vercel KV, Cloudflare KV, or local
+ * `.data/follow-rules.json` (see follow-rules-store). On Vercel without KV,
+ * writes return 503 with FollowRulesPersistError (never raw ENOENT).
  * Until a rule is saved, both surfaces show an honest empty state — never a
  * fetch-failure "—" for "Whales Monitored".
  */

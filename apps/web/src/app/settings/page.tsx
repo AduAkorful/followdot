@@ -409,7 +409,7 @@ export default function SettingsPage() {
               <Link href="/" className="text-[var(--accent)] underline">
                 whale profile
               </Link>{' '}
-              to save a rule here (persists locally across refresh). 1-Click Copy still works without Auto-Follow.
+              to save a rule here (durable across refresh when KV is configured). 1-Click Copy still works without Auto-Follow.
             </div>
           ) : (
             <table className="data-table">

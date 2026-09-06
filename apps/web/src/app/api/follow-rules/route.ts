@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   defaultFollowRule,
   deleteFollowRule,
+  FollowRulesPersistError,
+  followRulesPersistenceMeta,
   isAddress,
   listFollowRules,
+  resolveFollowRulesBackend,
   toPublicRule,
   upsertFollowRule,
 } from "@/lib/follow-rules-store";
@@ -31,15 +34,23 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const rules = await listFollowRules(wallet);
-  return NextResponse.json({
-    walletAddress: wallet.toLowerCase(),
-    rules: rules.map(toPublicRule),
-    persistence: "local-file",
-    workerNote:
-      "Local follow-rules store only. Autocopy still needs SESSION_KEYS_KV " +
-      "follower:{wallet}:{whale} records with sessionKey after Authorize.",
-  });
+  try {
+    const rules = await listFollowRules(wallet);
+    const backend = resolveFollowRulesBackend();
+    return NextResponse.json({
+      walletAddress: wallet.toLowerCase(),
+      rules: rules.map(toPublicRule),
+      ...followRulesPersistenceMeta(backend),
+    });
+  } catch (err) {
+    const message =
+      err instanceof FollowRulesPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to load follow rules";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 /**
@@ -96,16 +107,22 @@ export async function POST(request: NextRequest) {
       ...ruleBody,
       whaleAddress,
     });
+    const backend = resolveFollowRulesBackend();
     return NextResponse.json({
       ok: true,
       walletAddress: walletAddress.toLowerCase(),
       rule: toPublicRule(saved),
+      ...followRulesPersistenceMeta(backend),
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to persist follow rule" },
-      { status: 400 },
-    );
+    const message =
+      err instanceof FollowRulesPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to persist follow rule";
+    const status = err instanceof FollowRulesPersistError ? 503 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -130,11 +147,23 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "whale address required (?whale=)" }, { status: 400 });
   }
 
-  const deleted = await deleteFollowRule(wallet, whale);
-  return NextResponse.json({
-    ok: true,
-    deleted,
-    walletAddress: wallet.toLowerCase(),
-    whaleAddress: whale.toLowerCase(),
-  });
+  try {
+    const deleted = await deleteFollowRule(wallet, whale);
+    return NextResponse.json({
+      ok: true,
+      deleted,
+      walletAddress: wallet.toLowerCase(),
+      whaleAddress: whale.toLowerCase(),
+      storeBackend: resolveFollowRulesBackend(),
+    });
+  } catch (err) {
+    const message =
+      err instanceof FollowRulesPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to delete follow rule";
+    const status = err instanceof FollowRulesPersistError ? 503 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
