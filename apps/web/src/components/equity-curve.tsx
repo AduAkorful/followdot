@@ -42,8 +42,10 @@ export function EquityCurve({
   const chartWidth = width - paddingLeft - paddingRight;
   const chartHeight = height - paddingTop - paddingBottom;
 
+  // Even with 1–2 points, x spans the plot so polyline + area stay visible.
+  const denom = Math.max(1, chartData.length - 1);
   const points = chartData.map((d, i) => {
-    const x = paddingLeft + (i / Math.max(1, chartData.length - 1)) * chartWidth;
+    const x = paddingLeft + (i / denom) * chartWidth;
     const y = paddingTop + chartHeight - ((d.pnl - minPnl) / range) * chartHeight;
     return { x, y, pnl: d.pnl, timestamp: d.timestamp };
   });
@@ -67,7 +69,7 @@ export function EquityCurve({
       <svg
         className="chart-area w-full"
         viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="none"
+        preserveAspectRatio="xMidYMid meet"
         style={{ height: `${height}px` }}
       >
         <defs>
@@ -108,7 +110,7 @@ export function EquityCurve({
         {/* Area fill */}
         <path d={areaPath} fill={`url(#${gradId})`} />
 
-        {/* Line */}
+        {/* Line — visible even for 2-point (baseline + one settlement) series */}
         <polyline
           points={pointsString}
           fill="none"
@@ -116,6 +118,7 @@ export function EquityCurve({
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
         />
 
         {/* Highlight points */}

@@ -1,6 +1,8 @@
 /**
  * Build cumulative equity-curve points from per-market settled PnL.
  * Does not invent series — empty input ⇒ empty output (UI shows honest empty).
+ * With ≥1 settlement, prepends a $0 baseline just before the first point so
+ * a single settlement draws a real line ($0 → PnL), not an orphaned dot.
  */
 import type { EquityDataPoint } from '@/components/equity-curve';
 
@@ -44,7 +46,7 @@ export function buildEquityCurvePoints(
   });
 
   let running = 0;
-  return sorted.map((m, idx) => {
+  const settlements: EquityDataPoint[] = sorted.map((m, idx) => {
     running += m.pnl;
     const ts = earliestTsByMarket.get(m.marketId.toLowerCase());
     return {
@@ -52,4 +54,10 @@ export function buildEquityCurvePoints(
       pnl: running,
     };
   });
+
+  const first = settlements[0];
+  const firstTs = Number(first.timestamp);
+  const baselineTs = Number.isFinite(firstTs) ? firstTs - 1 : -1;
+
+  return [{ timestamp: baselineTs, pnl: 0 }, ...settlements];
 }
