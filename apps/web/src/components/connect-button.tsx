@@ -17,8 +17,14 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ChevronDown, LogOut, Copy, Check, Wallet, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { cn } from '@/lib/utils';
 
-export function ConnectButton() {
+type ConnectButtonProps = {
+  /** Sidebar footer needs full-width control + menu that opens upward above z-100. */
+  placement?: 'topbar' | 'sidebar';
+};
+
+export function ConnectButton({ placement = 'topbar' }: ConnectButtonProps) {
   const { login, logout, authenticated, ready } = usePrivy();
   const { isConnected, address: wagmiAddress } = useAccount();
   const { hasWalletSession, address, isWrongNetwork } = useWalletSession();
@@ -27,6 +33,7 @@ export function ConnectButton() {
   const [copied, setCopied] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const hadLiveWallet = useRef(false);
+  const isSidebar = placement === 'sidebar';
 
   useEffect(() => {
     if (isConnected && wagmiAddress) {
@@ -79,6 +86,14 @@ export function ConnectButton() {
   };
 
   if (!hasWalletSession || !address) {
+    if (isSidebar) {
+      return (
+        <button type="button" onClick={login} className="connect-wallet-btn cursor-pointer">
+          <Wallet className="h-4 w-4" />
+          Connect Wallet
+        </button>
+      );
+    }
     return (
       <Button
         onClick={login}
@@ -95,7 +110,10 @@ export function ConnectButton() {
       <Button
         onClick={() => switchChain({ chainId: somniaChain.id })}
         disabled={isSwitching}
-        className="bg-amber-500 hover:bg-amber-600 text-black font-semibold transition-all shadow-[0_0_15px_rgba(245,158,11,0.3)] animate-pulse cursor-pointer"
+        className={cn(
+          'bg-amber-500 hover:bg-amber-600 text-black font-semibold transition-all shadow-[0_0_15px_rgba(245,158,11,0.3)] animate-pulse cursor-pointer',
+          isSidebar && 'w-full',
+        )}
       >
         {isSwitching ? (
           <>
@@ -114,28 +132,55 @@ export function ConnectButton() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex items-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 rounded-full px-3 py-1.5 cursor-pointer text-sm font-medium transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring">
-        <Avatar className="h-6 w-6">
-          <AvatarFallback className="bg-[var(--accent)] text-black text-[10px] font-bold">
-            {address.slice(2, 4).toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-        <span className="text-sm font-mono">{shortenAddress(address)}</span>
-        <ChevronDown className="h-3 w-3 opacity-50" />
+      <DropdownMenuTrigger
+        className={cn(
+          'flex items-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 cursor-pointer text-sm font-medium transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          isSidebar
+            ? 'w-full justify-between rounded-[var(--radius-md)] px-3 py-2.5 border-[var(--border-accent)] bg-transparent hover:bg-[var(--accent-dim)]'
+            : 'rounded-full px-3 py-1.5',
+        )}
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <Avatar className="h-6 w-6 shrink-0">
+            <AvatarFallback className="bg-[var(--accent)] text-black text-[10px] font-bold">
+              {address.slice(2, 4).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <span className="text-sm font-mono truncate">{shortenAddress(address)}</span>
+        </span>
+        <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent
+        align={isSidebar ? 'start' : 'end'}
+        side={isSidebar ? 'top' : 'bottom'}
+        sideOffset={8}
+        className="w-56 p-1.5"
+      >
         <DropdownMenuGroup>
-          <DropdownMenuLabel>
-            <div className="flex flex-col space-y-1">
-              <span className="text-xs text-muted-foreground">Connected Wallet</span>
-              <span className="text-sm font-mono font-medium">{shortenAddress(address)}</span>
-              <span className="text-[10px] text-[var(--accent)] font-medium">Somnia Testnet (50312)</span>
+          <DropdownMenuLabel className="px-2 py-2 text-[var(--text-primary)]">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Connected
+              </span>
+              <span className="text-sm font-mono font-medium text-[var(--text-primary)]">
+                {shortenAddress(address)}
+              </span>
+              <span className="text-[11px] font-medium text-[var(--accent)]">
+                Somnia Testnet (50312)
+              </span>
             </div>
           </DropdownMenuLabel>
         </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={copyAddress} className="cursor-pointer">
-          {copied ? <Check className="mr-2 h-4 w-4 text-[var(--accent)]" /> : <Copy className="mr-2 h-4 w-4" />}
+        <DropdownMenuSeparator className="bg-[var(--border)]" />
+        <DropdownMenuItem
+          onClick={copyAddress}
+          className="cursor-pointer rounded-md px-2 py-2 text-[var(--text-primary)] focus:bg-[var(--bg-card-hover)]"
+        >
+          {copied ? (
+            <Check className="mr-2 h-4 w-4 text-[var(--accent)]" />
+          ) : (
+            <Copy className="mr-2 h-4 w-4 text-[var(--text-secondary)]" />
+          )}
           {copied ? 'Copied!' : 'Copy address'}
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -143,7 +188,7 @@ export function ConnectButton() {
             void handleDisconnect();
           }}
           disabled={isDisconnecting}
-          className="text-destructive cursor-pointer"
+          className="cursor-pointer rounded-md px-2 py-2 text-destructive focus:bg-destructive/10"
         >
           <LogOut className="mr-2 h-4 w-4" />
           {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}

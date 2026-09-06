@@ -81,7 +81,7 @@ export function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <ConnectButton />
+        <ConnectButton placement="sidebar" />
       </div>
     </aside>
   );
