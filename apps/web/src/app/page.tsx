@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useWhaleLeaderboard } from '@/hooks/use-whales';
 import { Sparkline } from '@/components/sparkline';
@@ -26,15 +26,23 @@ function formatPnL(pnl: number): string {
 }
 
 export default function Home() {
-  const { data, isLoading, isFetching, isError, error } = useWhaleLeaderboard(20);
+  const { data, isLoading, isFetching, isError, error, refetch, isRefetching } = useWhaleLeaderboard(20);
   const whales = data?.whales ?? [];
   const snapshotLabel = formatSnapshotLabel(data?.generatedAt);
-  const showInitialSkeleton = isLoading && whales.length === 0;
+  const isPartial = data?.partial === true;
+  // Show skeleton only while the first attempt is in flight — never on error.
+  const showInitialSkeleton = isLoading && !isError && whales.length === 0;
+  const showLoadError = isError && whales.length === 0;
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState<'skill' | 'calibration'>('skill');
   const pageSize = 10;
 
+  /** Skill-order ranks for profile deep-links (stable even when table sorted by calibration). */
+  const skillRankByAddress = useMemo(() => {
+    const byScore = [...whales].sort((a, b) => b.score - a.score);
+    return new Map(byScore.map((w, i) => [w.address.toLowerCase(), i + 1]));
+  }, [whales]);
 
   const filteredByAddress = search
     ? whales.filter((w) => w.address.toLowerCase().includes(search.toLowerCase()))
@@ -65,10 +73,15 @@ export default function Home() {
       <div className="animate-in">
         <h2 className="page-title">Whale Leaderboard</h2>
         <p className="page-subtitle">
-          Top traders ranked by Bayesian skill score — consistent edge, not raw PnL.
+          Top traders ranked by Bayesian skill on the <strong>recent fill window</strong> — not full wallet history.
           {snapshotLabel ? (
             <span className="block mt-1 text-xs text-[var(--text-muted)] font-normal">
               Snapshot {snapshotLabel}
+              {isPartial ? ' · partial (cold budget)' : ''}
+            </span>
+          ) : isPartial ? (
+            <span className="block mt-1 text-xs text-[var(--text-muted)] font-normal">
+              Partial snapshot — cold path finished under time budget
             </span>
           ) : null}
         </p>
@@ -135,7 +148,9 @@ export default function Home() {
         <div className="card-header flex flex-row items-center justify-between">
           <div>
             <h3 className="card-title">Top Whales by Skill</h3>
-            <p className="card-desc">Rankings update automatically with settled market outcomes</p>
+            <p className="card-desc">
+              Recent-window skill (discovery fills). Profile pages use deeper history and may differ.
+            </p>
           </div>
           <div className="search-box w-64">
             <Search />
@@ -177,14 +192,41 @@ export default function Home() {
             </div>
           )}
 
-          {isError && whales.length === 0 && (
-            <div className="flex items-center justify-center py-12 text-[var(--red)]">
-              <AlertCircle className="h-5 w-5 mr-2" />
-              Failed to load leaderboard: {error?.message}
+          {showLoadError && (
+            <div className="flex flex-col items-center justify-center gap-3 py-12 px-4 text-[var(--red)]">
+              <div className="flex items-center">
+                <AlertCircle className="h-5 w-5 mr-2 shrink-0" />
+                <span>{error?.message ?? 'Failed to load leaderboard'}</span>
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={isRefetching}
+                onClick={() => { void refetch(); }}
+              >
+                {isRefetching ? 'Retrying…' : 'Retry'}
+              </button>
             </div>
           )}
 
-          {!showInitialSkeleton && !isError && filtered.length === 0 && (
+          {isError && whales.length > 0 && (
+            <div className="flex items-center justify-between gap-3 px-4 py-2 text-xs border-b border-[var(--red)]/40 text-[var(--red)]">
+              <span className="flex items-center gap-2">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                Refresh failed: {error?.message ?? 'unknown error'}
+              </span>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={isRefetching}
+                onClick={() => { void refetch(); }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!showInitialSkeleton && !showLoadError && filtered.length === 0 && (
             <div className="text-center py-16 text-[var(--text-muted)]">
               {search ? 'No wallets match your search.' : 'No active whales found on Somnia testnet.'}
             </div>
@@ -214,25 +256,27 @@ export default function Home() {
               </thead>
               <tbody>
                 {paginatedWhales.map((whale, idx) => {
-                  const globalRank = (currentPage - 1) * pageSize + idx + 1;
+                  const displayRank = (currentPage - 1) * pageSize + idx + 1;
+                  const skillRank = skillRankByAddress.get(whale.address.toLowerCase()) ?? displayRank;
+                  const profileHref = `/whale/${whale.address}?rank=${skillRank}&total=${whales.length}`;
                   const scorePct = Math.round(whale.score * 100);
                   const winRatePct = Math.round(whale.winRate * 100);
                   const pnlStr = formatPnL(whale.totalRealizedPnL);
                   const isPositive = whale.totalRealizedPnL >= 0;
 
                   let rankClass = 'rank';
-                  if (globalRank === 1) rankClass += ' gold';
-                  else if (globalRank === 2) rankClass += ' silver';
-                  else if (globalRank === 3) rankClass += ' bronze';
+                  if (skillRank === 1) rankClass += ' gold';
+                  else if (skillRank === 2) rankClass += ' silver';
+                  else if (skillRank === 3) rankClass += ' bronze';
 
                   return (
                     <tr key={whale.address}>
                       <td>
-                        <span className={rankClass}>#{globalRank}</span>
+                        <span className={rankClass}>#{sortBy === 'skill' ? skillRank : displayRank}</span>
                       </td>
                       <td>
                         <Link
-                          href={`/whale/${whale.address}?rank=${globalRank}&total=${whales.length}`}
+                          href={profileHref}
                           className="flex items-center gap-3 hover:text-[var(--accent)] transition-colors"
                         >
                           <div className="profile-avatar !w-8 !h-8 !text-xs">
@@ -248,7 +292,7 @@ export default function Home() {
                           </div>
                         </Link>
                       </td>
-                      <td>
+                      <td title="Recent fill-window skill (not full profile history)">
                         <div className="score-bar-wrapper">
                           <div className="score-bar">
                             <div
@@ -258,6 +302,7 @@ export default function Home() {
                           </div>
                           <span className="score-bar-value">{scorePct}%</span>
                         </div>
+                        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">recent window</div>
                       </td>
                       <td className="right mono font-semibold">{winRatePct}%</td>
                       <td className="right mono text-[var(--text-secondary)]">{whale.totalMarkets}</td>
@@ -268,7 +313,7 @@ export default function Home() {
                         {whale.calibrationScore === null ? 'unavailable' : `${Math.round(whale.calibrationScore * 100)}%`}
                       </td>
                       <td className="right">
-                        <Link href={`/whale/${whale.address}`} className="btn btn-accent btn-sm">
+                        <Link href={profileHref} className="btn btn-accent btn-sm">
                           View profile
                         </Link>
                       </td>

@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useAccount } from 'wagmi';
 import { useWhaleProfile, useWhaleProfileAnalytics } from '@/hooks/use-whale-profile';
+import { useWhaleLeaderboard } from '@/hooks/use-whales';
 import { mergeWhaleProfile } from '@/lib/whale-profile';
 import { resolveConsistencyDisplay, resolveRankDisplay } from '@/lib/whale-display';
 import { useCopyOrder } from '@/hooks/use-copy-order';
@@ -150,8 +151,25 @@ export default function WhaleProfile() {
 
   const rankFromQuery = Number(searchParams?.get('rank') ?? '');
   const totalFromQuery = Number(searchParams?.get('total') ?? '');
-  const liveRank = Number.isInteger(rankFromQuery) && rankFromQuery > 0 ? rankFromQuery : null;
-  const liveTotal = Number.isInteger(totalFromQuery) && totalFromQuery > 0 ? totalFromQuery : null;
+  const queryRank = Number.isInteger(rankFromQuery) && rankFromQuery > 0 ? rankFromQuery : null;
+  const queryTotal = Number.isInteger(totalFromQuery) && totalFromQuery > 0 ? totalFromQuery : null;
+
+  // Prefer query params from LB links; fall back to cached leaderboard so
+  // "View profile" / refresh don't falsely show Unranked for a ranked whale.
+  const { data: leaderboard } = useWhaleLeaderboard(20);
+  const lbLookup = useMemo(() => {
+    const list = leaderboard?.whales ?? [];
+    const idx = list.findIndex((w) => w.address.toLowerCase() === address.toLowerCase());
+    if (idx < 0) return { rank: null as number | null, total: null as number | null, score: null as number | null };
+    return { rank: idx + 1, total: list.length, score: list[idx]?.score ?? null };
+  }, [leaderboard, address]);
+
+  const liveRank = queryRank ?? lbLookup.rank;
+  const liveTotal = queryTotal ?? lbLookup.total;
+  const lbRecentSkillPct =
+    lbLookup.score !== null && Number.isFinite(lbLookup.score)
+      ? Math.round(lbLookup.score * 100)
+      : null;
 
   const [copyOpen, setCopyOpen] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<{
@@ -311,7 +329,7 @@ export default function WhaleProfile() {
             </h2>
             <div className="profile-address">{s.address}</div>
             <div className="profile-meta">
-              {scorePct}% Skill Score · {winRatePct}% Win Rate across {s.totalMarkets} settled markets
+              {scorePct}% profile skill · {winRatePct}% Win Rate across {s.totalMarkets} settled markets
               {rankDisplay.percentileLabel ? (
                 <span className="badge badge-outline text-xs ml-2">
                   {rankDisplay.percentileLabel}
@@ -430,6 +448,12 @@ export default function WhaleProfile() {
           </div>
           <div className="score-bar mt-3">
             <div className="score-bar-fill" style={{ width: `${scorePct}%` }} />
+          </div>
+          <div className="text-xs text-[var(--text-muted)] mt-3 font-mono">
+            Profile skill uses deeper fill history
+            {lbRecentSkillPct !== null ? (
+              <> · LB recent-window {lbRecentSkillPct}%</>
+            ) : null}
           </div>
         </div>
 

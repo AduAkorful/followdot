@@ -39,6 +39,8 @@ export interface WhaleLeaderboardPayload {
   whales: WhaleLeaderboardEntry[];
   count: number;
   generatedAt: string | null;
+  /** True when cold path returned before scoring every discovered trader. */
+  partial?: boolean;
 }
 
 /** Fresh window before we prefer a background refresh. */
@@ -46,9 +48,16 @@ export const WHALE_LEADERBOARD_FRESH_MS = 30_000;
 /** Serve stale while a refresh runs (stale-while-revalidate). */
 export const WHALE_LEADERBOARD_STALE_MS = 120_000;
 /** Cap concurrent whale score pipelines (fills + PnL + skill). */
-const WHALE_SCORE_CONCURRENCY = 10;
-/** Leaderboard fill budget — 2 pages is enough for skill ranking. */
-const LEADERBOARD_FILL_LIMIT = 200;
+export const WHALE_SCORE_CONCURRENCY = 5;
+/** Per-trader fill slice from the discovery window. */
+const LEADERBOARD_FILL_LIMIT = 120;
+/** Global recent-fill discovery window (not full trader history). */
+export const LEADERBOARD_DISCOVERY_FILL_LIMIT = 400;
+/**
+ * Soft wall-clock budget for a cold `/api/whales` build.
+ * Prefer a partial top-N under maxDuration=60 over a Vercel 504.
+ */
+export const WHALE_LEADERBOARD_COLD_BUDGET_MS = 45_000;
 
 type LeaderboardCacheEntry = {
   expiresAt: number;
@@ -70,27 +79,41 @@ export function parseWhaleLeaderboardPayload(body: unknown): WhaleLeaderboardPay
     typeof obj.generatedAt === "string" && obj.generatedAt.length > 0
       ? obj.generatedAt
       : null;
-  return { whales, count, generatedAt };
+  const partial = obj.partial === true;
+  return partial
+    ? { whales, count, generatedAt, partial: true }
+    : { whales, count, generatedAt };
 }
 
-async function mapPool<T, R>(
+async function mapPoolUntilBudget<T, R>(
   items: T[],
   concurrency: number,
-  fn: (item: T, index: number) => Promise<R>,
-  signal?: AbortSignal,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+  fn: (item: T, index: number) => Promise<R | null>,
+  opts: { startedAt: number; budgetMs: number; signal?: AbortSignal },
+): Promise<{ results: R[]; timedOut: boolean; attempted: number }> {
+  const results: R[] = [];
   let next = 0;
+  let attempted = 0;
+  let timedOut = false;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (true) {
-      if (signal?.aborted) break;
+      if (opts.signal?.aborted) break;
+      if (Date.now() - opts.startedAt >= opts.budgetMs) {
+        timedOut = true;
+        break;
+      }
       const i = next++;
       if (i >= items.length) break;
-      results[i] = await fn(items[i], i);
+      attempted += 1;
+      const value = await fn(items[i], i);
+      if (value != null) results.push(value);
     }
   });
   await Promise.all(workers);
-  return results;
+  if (attempted < items.length && (opts.signal?.aborted || Date.now() - opts.startedAt >= opts.budgetMs)) {
+    timedOut = true;
+  }
+  return { results, timedOut, attempted };
 }
 
 async function scoreTrader(
@@ -173,23 +196,41 @@ async function scoreTrader(
  * No mock data. If the indexer returns no fills or no resolved markets,
  * the result is an empty array — never placeholder data.
  */
+export type WhaleLeaderboardBuildResult = {
+  whales: WhaleLeaderboardEntry[];
+  partial: boolean;
+};
+
 export async function fetchWhaleLeaderboard(
   limit = 20,
   signal?: AbortSignal,
 ): Promise<WhaleLeaderboardEntry[]> {
+  const { whales } = await fetchWhaleLeaderboardDetailed(limit, signal);
+  return whales;
+}
+
+/**
+ * Cold-path builder with a wall-clock budget. Returns whatever top-N scores
+ * finished in time rather than hanging until Vercel 504s at maxDuration.
+ */
+export async function fetchWhaleLeaderboardDetailed(
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<WhaleLeaderboardBuildResult> {
   const t0 = Date.now();
 
   // Step 1+2 — resolved markets and discovery fills in parallel.
   // Score from the discovery fill window (no per-wallet fill N+1): the same
   // fills used to rank traders already contain their recent binary activity.
   const [markets, fills] = await Promise.all([
-    fetchResolvedMarkets(signal),
-    fetchRecentFills(1000, signal),
+    // Fewer pages on cold path — discovery fills only intersect recent markets.
+    fetchResolvedMarkets(signal, { maxPages: 5 }),
+    fetchRecentFills(LEADERBOARD_DISCOVERY_FILL_LIMIT, signal),
   ]);
   const marketMap = buildMarketMap(markets);
   const traderAddresses = extractTopTraders(fills, limit);
 
-  if (traderAddresses.length === 0) return [];
+  if (traderAddresses.length === 0) return { whales: [], partial: false };
 
   const fillsByTrader = new Map<string, FillRow[]>();
   const seenFillIds = new Map<string, Set<string>>();
@@ -207,7 +248,7 @@ export async function fetchWhaleLeaderboard(
     }
   }
 
-  const scored = await mapPool(
+  const { results: entries, timedOut, attempted } = await mapPoolUntilBudget(
     traderAddresses,
     WHALE_SCORE_CONCURRENCY,
     async (address) => {
@@ -226,26 +267,27 @@ export async function fetchWhaleLeaderboard(
         return null;
       }
     },
-    signal,
+    { startedAt: t0, budgetMs: WHALE_LEADERBOARD_COLD_BUDGET_MS, signal },
   );
 
-  const entries = scored.filter((e): e is WhaleLeaderboardEntry => e != null);
   const sorted = entries.sort((a, b) => b.score - a.score);
+  const partial = timedOut || attempted < traderAddresses.length;
   console.info(
-    `[whales] leaderboard limit=${limit} traders=${traderAddresses.length} scored=${sorted.length} markets=${markets.length} ${Date.now() - t0}ms`,
+    `[whales] leaderboard limit=${limit} traders=${traderAddresses.length} scored=${sorted.length} attempted=${attempted} partial=${partial} markets=${markets.length} fills=${fills.length} ${Date.now() - t0}ms`,
   );
-  return sorted;
+  return { whales: sorted, partial };
 }
 
 async function buildLeaderboardPayload(
   limit: number,
   signal?: AbortSignal,
 ): Promise<WhaleLeaderboardPayload> {
-  const whales = await fetchWhaleLeaderboard(limit, signal);
+  const { whales, partial } = await fetchWhaleLeaderboardDetailed(limit, signal);
   return {
     whales,
     count: whales.length,
     generatedAt: new Date().toISOString(),
+    ...(partial ? { partial: true } : {}),
   };
 }
 

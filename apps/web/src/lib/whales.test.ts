@@ -4,6 +4,9 @@ import {
   parseWhaleLeaderboardPayload,
   WHALE_LEADERBOARD_FRESH_MS,
   WHALE_LEADERBOARD_STALE_MS,
+  WHALE_LEADERBOARD_COLD_BUDGET_MS,
+  LEADERBOARD_DISCOVERY_FILL_LIMIT,
+  WHALE_SCORE_CONCURRENCY,
 } from '@/lib/whales';
 import type { FillRow } from '@somnia-chain/markets-sdk';
 
@@ -108,5 +111,25 @@ describe("leaderboard cache windows", () => {
   it("keeps fresh window shorter than stale-while-revalidate window", () => {
     expect(WHALE_LEADERBOARD_FRESH_MS).toBe(30_000);
     expect(WHALE_LEADERBOARD_STALE_MS).toBeGreaterThan(WHALE_LEADERBOARD_FRESH_MS);
+  });
+});
+
+describe("leaderboard cold-path knobs", () => {
+  it("keeps cold budget under Vercel maxDuration headroom", () => {
+    expect(WHALE_LEADERBOARD_COLD_BUDGET_MS).toBeLessThanOrEqual(55_000);
+    expect(WHALE_LEADERBOARD_COLD_BUDGET_MS).toBeGreaterThanOrEqual(30_000);
+  });
+
+  it("shrinks discovery fills and concurrency vs the prior cold path", () => {
+    expect(LEADERBOARD_DISCOVERY_FILL_LIMIT).toBeLessThanOrEqual(500);
+    expect(WHALE_SCORE_CONCURRENCY).toBeLessThanOrEqual(6);
+  });
+});
+
+describe("parseWhaleLeaderboardPayload partial", () => {
+  it("passes through partial=true without inventing it", () => {
+    expect(parseWhaleLeaderboardPayload({ whales: [], partial: true }).partial).toBe(true);
+    expect(parseWhaleLeaderboardPayload({ whales: [] }).partial).toBeUndefined();
+    expect(parseWhaleLeaderboardPayload({ whales: [], partial: false }).partial).toBeUndefined();
   });
 });

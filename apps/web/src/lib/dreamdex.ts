@@ -335,12 +335,21 @@ export async function fetchTraderFills(
  * Only markets that have a winningOutcome (i.e. resolved) are useful for
  * skill scoring — we need to know which outcome won.
  */
-export async function fetchResolvedMarkets(signal?: AbortSignal): Promise<BinaryMarket[]> {
+export async function fetchResolvedMarkets(
+  signal?: AbortSignal,
+  opts?: { maxPages?: number },
+): Promise<BinaryMarket[]> {
+  const maxPages = Math.min(
+    MAX_RESOLVED_PAGES,
+    Math.max(1, opts?.maxPages ?? MAX_RESOLVED_PAGES),
+  );
   const now = Date.now();
+  // Full-cache hits can satisfy smaller page budgets.
   if (resolvedMarketsCache.data.length > 0 && now < resolvedMarketsCache.expiresAt) {
     return resolvedMarketsCache.data;
   }
-  if (resolvedMarketsCache.inflight) {
+  // Only coalesce full-budget fetches — truncated cold-path must not starve profiles.
+  if (maxPages >= MAX_RESOLVED_PAGES && resolvedMarketsCache.inflight) {
     return resolvedMarketsCache.inflight;
   }
 
@@ -349,7 +358,7 @@ export async function fetchResolvedMarkets(signal?: AbortSignal): Promise<Binary
     // Known offsets — fan out pages in parallel instead of waiting serially
     // (was up to 10 × indexer RTT on the critical path).
     const batches = await Promise.all(
-      Array.from({ length: MAX_RESOLVED_PAGES }, (_, page) => page).map(async (page) => {
+      Array.from({ length: maxPages }, (_, page) => page).map(async (page) => {
         if (signal?.aborted) return [] as BinaryMarket[];
         const offset = page * limit;
         try {
@@ -381,12 +390,17 @@ export async function fetchResolvedMarkets(signal?: AbortSignal): Promise<Binary
       if (batch.length < limit) break;
     }
 
-    resolvedMarketsCache.data = resolved;
-    resolvedMarketsCache.expiresAt = Date.now() + RESOLVED_MARKETS_TTL_MS;
+    // Avoid caching a truncated cold-path window as the full resolved set.
+    if (maxPages >= MAX_RESOLVED_PAGES) {
+      resolvedMarketsCache.data = resolved;
+      resolvedMarketsCache.expiresAt = Date.now() + RESOLVED_MARKETS_TTL_MS;
+    }
     return resolved;
   })();
 
-  resolvedMarketsCache.inflight = inflight;
+  if (maxPages >= MAX_RESOLVED_PAGES) {
+    resolvedMarketsCache.inflight = inflight;
+  }
   try {
     return await inflight;
   } finally {
