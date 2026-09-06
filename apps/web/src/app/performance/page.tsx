@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ManagePositionModal } from '@/components/manage-position-modal';
 import { Pagination } from '@/components/pagination';
 import { ConnectButton } from '@/components/connect-button';
@@ -15,16 +15,22 @@ import {
 } from '@/lib/open-position-display';
 import { withRebuiltCostBasis } from '@/lib/rebuild-cost-basis';
 import {
+  FOLLOW_RULES_QUERY_KEY,
   NO_WHALES_FOLLOWED_YET,
   countMonitoredWhales,
-  loadFollowRules,
+  fetchFollowRules,
 } from '@/lib/follow-rules';
+import { useClosePosition } from '@/hooks/use-close-position';
 import { buildEquityCurvePoints } from '@/lib/equity-curve-data';
 import { EquityCurve } from '@/components/equity-curve';
 import { useQuery } from '@tanstack/react-query';
 
 interface PositionItem {
   marketId: string;
+  poolAddress: string;
+  quoteDecimals: number;
+  sellSide: 'SELL_YES' | 'SELL_NO';
+  quantityRaw: bigint;
   title: string;
   whaleAddress: string | null;
   outcome: string;
@@ -55,6 +61,7 @@ export default function PerformancePage() {
 
   const [selectedPosition, setSelectedPosition] = useState<PositionItem | null>(null);
   const [manageModalOpen, setManageModalOpen] = useState(false);
+  const closePosition = useClosePosition();
 
   // Same indexer path as whale profiles — real settled marketPnL only (no invented points).
   const equityQuery = useQuery({
@@ -96,8 +103,14 @@ export default function PerformancePage() {
       );
       if (!money) return [];
       const yesHeld = position.balanceYes > 0n;
+      const quantityRaw = yesHeld ? position.balanceYes : position.balanceNo;
+      if (quantityRaw <= 0n) return [];
       return [{
         marketId: position.market.id,
+        poolAddress: position.market.poolAddress,
+        quoteDecimals: position.market.quoteDecimals,
+        sellSide: yesHeld ? 'SELL_YES' as const : 'SELL_NO' as const,
+        quantityRaw,
         title: position.market.question
           || (position.market.asset && position.market.interval
             ? `${position.market.asset} ${position.market.interval}`
@@ -123,8 +136,15 @@ export default function PerformancePage() {
   );
   const hasUnknownCostBasis = activePositions.some((p) => p.costBasisUnknown);
 
-  // Same source Settings uses — empty until Auto-Follow / KV persistence exists.
-  const followRules = useMemo(() => loadFollowRules(address), [address]);
+  // Same source Settings uses — local /api/follow-rules file store.
+  const followRulesQuery = useQuery({
+    queryKey: [FOLLOW_RULES_QUERY_KEY, address],
+    queryFn: () => fetchFollowRules(address!),
+    enabled: hasWalletSession && !!address,
+    staleTime: 30_000,
+    retry: 1,
+  });
+  const followRules = followRulesQuery.data?.rules ?? [];
   const whalesMonitored = countMonitoredWhales(followRules);
 
   const totalEntries = activePositions.length;
@@ -137,6 +157,25 @@ export default function PerformancePage() {
     setSelectedPosition(pos);
     setManageModalOpen(true);
   };
+
+  const handleClosePosition = useCallback(async (_marketId: string) => {
+    if (!selectedPosition) throw new Error('No position selected');
+    if (!selectedPosition.poolAddress) {
+      throw new Error('Pool address missing for this market; cannot place sell');
+    }
+    const result = await closePosition.mutateAsync({
+      pool: selectedPosition.poolAddress,
+      side: selectedPosition.sellSide,
+      quantity: selectedPosition.quantityRaw,
+      quoteDecimals: selectedPosition.quoteDecimals,
+    });
+    if (result.partial) {
+      // Still closed what the book could absorb; surface via console for QA.
+      console.warn(
+        `[close] Partial unwind: fillable ${result.fillableQuantity} of ${result.quantity}`,
+      );
+    }
+  }, [selectedPosition, closePosition]);
 
   return (
     <div className="space-y-6">
@@ -223,9 +262,13 @@ export default function PerformancePage() {
                 </div>
               </div>
               <p className="text-xs text-[var(--text-muted)] mt-2">
-                {whalesMonitored === 0
-                  ? NO_WHALES_FOLLOWED_YET
-                  : `${whalesMonitored} auto-copy rule${whalesMonitored === 1 ? '' : 's'}`}
+                {followRulesQuery.isLoading
+                  ? 'Loading saved rules…'
+                  : followRulesQuery.isError
+                    ? 'Could not load saved rules'
+                    : whalesMonitored === 0
+                      ? NO_WHALES_FOLLOWED_YET
+                      : `${whalesMonitored} saved auto-copy rule${whalesMonitored === 1 ? '' : 's'}`}
               </p>
             </div>
           </div>
@@ -388,6 +431,7 @@ export default function PerformancePage() {
         open={manageModalOpen}
         onOpenChange={setManageModalOpen}
         position={selectedPosition}
+        onClosePosition={handleClosePosition}
       />
     </div>
   );

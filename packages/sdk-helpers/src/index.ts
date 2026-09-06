@@ -25,6 +25,7 @@ import {
   type SomniaMarketsClient,
   type BinaryMarket,
   type BinarySide,
+  type BinarySellSide,
   type FillRow,
   type OpenPositionPnL,
   type ClaimablePosition,
@@ -33,8 +34,10 @@ import {
   ORDER_TYPE,
   binaryFillsFor,
   computeBinaryPnl,
+  quoteBinarySellOverBook,
 } from "@somnia-chain/markets-sdk";
 import { somniaShannon } from "@somnia-chain/markets-sdk/chains";
+import type { Address } from "viem";
 import {
   computeSkillScore,
   type SkillScoreResult,
@@ -391,6 +394,100 @@ export async function placeCopyOrder(
   );
 
   return { hash: order.txHash ?? order.id, orderId: order.id };
+}
+
+/**
+ * Sell the full YES or NO outcome balance for an open binary position.
+ *
+ * Quotes against the on-chain book (eth_call) + pool tick/lot params, then
+ * places a market (IOC) sell via wagmi `walletClient` / private key.
+ * Prefers a real sell over a disabled Close button when balances + bids exist.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function closeOpenPosition(
+  config: FollowdotSDKConfig & { privateKey?: string; walletClient?: any },
+  opts: {
+    pool: string;
+    side: BinarySellSide;
+    quantity: bigint;
+    quoteDecimals: number;
+    /** Protective floor cushion in bps (default 300 = 3%). */
+    slippageBps?: number;
+  },
+): Promise<{
+  hash: string;
+  orderId?: string;
+  side: BinarySellSide;
+  quantity: string;
+  fillableQuantity: string;
+  estProceeds: string;
+  partial: boolean;
+}> {
+  if (!config.walletClient && !config.privateKey) {
+    throw new Error("Wallet not connected: closeOpenPosition requires walletClient or privateKey");
+  }
+  if (opts.quantity <= 0n) {
+    throw new Error("Nothing to sell: outcome balance is zero");
+  }
+  if (!Number.isInteger(opts.quoteDecimals) || opts.quoteDecimals < 0) {
+    throw new Error("quoteDecimals unavailable for this market");
+  }
+
+  const sdk = createDreamDexSDK(config);
+  const pool = opts.pool as Address;
+  const oneCollateral = 10n ** BigInt(opts.quoteDecimals);
+
+  const [book, bookParams] = await Promise.all([
+    sdk.client.getBinaryOrderBook(pool, { decimals: opts.quoteDecimals }),
+    sdk.client.getBinaryBookParams(pool),
+  ]);
+
+  const slippageBps =
+    opts.slippageBps != null && Number.isFinite(opts.slippageBps)
+      ? BigInt(Math.max(0, Math.floor(opts.slippageBps)))
+      : 300n;
+
+  const quote = quoteBinarySellOverBook(
+    book,
+    opts.side,
+    opts.quantity,
+    oneCollateral,
+    {
+      tickSize: bookParams.tickSize,
+      lotSize: bookParams.lotSize,
+      minQuantity: bookParams.minQuantity,
+      slippageBps,
+    },
+  );
+
+  if (!quote || quote.quantity <= 0n || quote.fillableQuantity <= 0n) {
+    throw new Error(
+      "No fillable bids to sell into (empty book or size below pool minQuantity). Hold to resolution or try again later.",
+    );
+  }
+
+  const trader = sdk.client.createTrader({
+    ...(config.walletClient ? { walletClient: config.walletClient } : {}),
+    ...(config.privateKey ? { privateKey: config.privateKey as `0x${string}` } : {}),
+  });
+
+  const result = await trader.placeOrder({
+    pool,
+    side: quote.side,
+    price: quote.yesPrice,
+    quantity: quote.quantity,
+    orderType: ORDER_TYPE.MARKET,
+  });
+
+  return {
+    hash: result.hash,
+    orderId: result.orderId != null ? result.orderId.toString() : undefined,
+    side: quote.side,
+    quantity: quote.quantity.toString(),
+    fillableQuantity: quote.fillableQuantity.toString(),
+    estProceeds: quote.estProceeds.toString(),
+    partial: quote.fillableQuantity < quote.quantity,
+  };
 }
 
 /**

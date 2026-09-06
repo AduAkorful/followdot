@@ -4,7 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAccount, useWalletClient } from 'wagmi';
 import { ConnectButton } from '@/components/connect-button';
 import { EditRuleModal, AutoCopyRule } from '@/components/edit-rule-modal';
-import { NO_WHALES_FOLLOWED_YET, loadFollowRules } from '@/lib/follow-rules';
+import {
+  NO_WHALES_FOLLOWED_YET,
+  fetchFollowRules,
+  saveFollowRule,
+} from '@/lib/follow-rules';
 import { Key, Shield, Pause, Play, Edit3 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -34,7 +38,10 @@ export default function SettingsPage() {
   const [workerNote, setWorkerNote] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
-  const [rules, setRules] = useState<AutoCopyRule[]>(() => loadFollowRules());
+  const [rules, setRules] = useState<AutoCopyRule[]>([]);
+  const [rulesLoading, setRulesLoading] = useState(false);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+  const [rulesSaving, setRulesSaving] = useState(false);
   const [editingRule, setEditingRule] = useState<AutoCopyRule | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
 
@@ -72,19 +79,38 @@ export default function SettingsPage() {
     }
   }, [address, applyStatus]);
 
+  const refreshFollowRules = useCallback(async () => {
+    if (!address) {
+      setRules([]);
+      return;
+    }
+    setRulesLoading(true);
+    setRulesError(null);
+    try {
+      const data = await fetchFollowRules(address);
+      setRules(data.rules ?? []);
+    } catch (err) {
+      setRulesError(err instanceof Error ? err.message : 'Failed to load follow rules');
+      setRules([]);
+    } finally {
+      setRulesLoading(false);
+    }
+  }, [address]);
+
   useEffect(() => {
     if (isConnected && address) {
       void refreshSessionStatus();
-      setRules(loadFollowRules(address));
+      void refreshFollowRules();
     } else {
       setSessionActive(false);
       setSessionKeyAddress(null);
       setGrantTxHash(null);
       setOnChainGranted(false);
       setWorkerNote(null);
-      setRules(loadFollowRules(null));
+      setRules([]);
+      setRulesError(null);
     }
-  }, [isConnected, address, refreshSessionStatus]);
+  }, [isConnected, address, refreshSessionStatus, refreshFollowRules]);
 
   const handleGrantSessionKey = async () => {
     setSessionGranting(true);
@@ -185,20 +211,42 @@ export default function SettingsPage() {
     }
   };
 
-  const handleToggleRuleStatus = (whaleAddr: string) => {
-    setRules((prev) =>
-      prev.map((r) =>
-        r.whaleAddress === whaleAddr
-          ? { ...r, status: r.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' }
-          : r
-      )
-    );
+  const handleToggleRuleStatus = async (whaleAddr: string) => {
+    if (!address) return;
+    const current = rules.find((r) => r.whaleAddress === whaleAddr);
+    if (!current) return;
+    const updated: AutoCopyRule = {
+      ...current,
+      status: current.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE',
+    };
+    setRulesSaving(true);
+    setRulesError(null);
+    try {
+      const saved = await saveFollowRule(address, updated);
+      setRules((prev) =>
+        prev.map((r) => (r.whaleAddress.toLowerCase() === saved.whaleAddress.toLowerCase() ? saved : r)),
+      );
+    } catch (err) {
+      setRulesError(err instanceof Error ? err.message : 'Failed to update rule');
+    } finally {
+      setRulesSaving(false);
+    }
   };
 
-  const handleSaveRule = (updated: AutoCopyRule) => {
-    setRules((prev) =>
-      prev.map((r) => (r.whaleAddress === updated.whaleAddress ? updated : r))
-    );
+  const handleSaveRule = async (updated: AutoCopyRule) => {
+    if (!address) return;
+    setRulesSaving(true);
+    setRulesError(null);
+    try {
+      const saved = await saveFollowRule(address, updated);
+      setRules((prev) =>
+        prev.map((r) => (r.whaleAddress.toLowerCase() === saved.whaleAddress.toLowerCase() ? saved : r)),
+      );
+    } catch (err) {
+      setRulesError(err instanceof Error ? err.message : 'Failed to save rule');
+    } finally {
+      setRulesSaving(false);
+    }
   };
 
   return (
@@ -339,13 +387,19 @@ export default function SettingsPage() {
         </div>
 
         <div className="card-body p-0 mt-4 overflow-x-auto">
-          {rules.length === 0 ? (
+          {rulesError && (
+            <p className="px-4 py-2 text-xs text-[var(--red)]">{rulesError}</p>
+          )}
+          {rulesLoading ? (
+            <div className="text-center py-16 text-[var(--text-muted)]">Loading saved follow rules…</div>
+          ) : rules.length === 0 ? (
             <div className="text-center py-16 text-[var(--text-muted)]">
-              {NO_WHALES_FOLLOWED_YET}. Auto-Follow is not available yet — visit the{' '}
+              {NO_WHALES_FOLLOWED_YET}. Use{' '}
+              <span className="text-[var(--text-secondary)]">Auto-Follow</span> on a{' '}
               <Link href="/" className="text-[var(--accent)] underline">
-                Leaderboard
+                whale profile
               </Link>{' '}
-              for live whale profiles (1-Click Copy still works when a position is open).
+              to save a rule here (persists locally across refresh). 1-Click Copy still works without Auto-Follow.
             </div>
           ) : (
             <table className="data-table">
@@ -385,8 +439,9 @@ export default function SettingsPage() {
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => handleToggleRuleStatus(rule.whaleAddress)}
-                          className="btn btn-ghost btn-sm text-[var(--accent)]"
+                          onClick={() => void handleToggleRuleStatus(rule.whaleAddress)}
+                          disabled={rulesSaving}
+                          className="btn btn-ghost btn-sm text-[var(--accent)] disabled:opacity-40"
                         >
                           {rule.status === 'ACTIVE' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                         </button>

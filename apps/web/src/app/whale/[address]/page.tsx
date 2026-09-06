@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useAccount } from 'wagmi';
 import { useWhaleProfile, useWhaleProfileAnalytics } from '@/hooks/use-whale-profile';
 import { mergeWhaleProfile } from '@/lib/whale-profile';
 import { resolveConsistencyDisplay, resolveRankDisplay } from '@/lib/whale-display';
@@ -22,6 +23,13 @@ import {
   formatOpenPositionMoney,
   formatSharesHuman,
 } from '@/lib/open-position-display';
+import {
+  FOLLOW_RULES_QUERY_KEY,
+  fetchFollowRules,
+  saveFollowRule,
+  type AutoCopyRule,
+} from '@/lib/follow-rules';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 function shortenAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -154,7 +162,58 @@ export default function WhaleProfile() {
   const [copyError, setCopyError] = useState<string | null>(null);
   const [copyHash, setCopyHash] = useState<string | null>(null);
   const copyOrder = useCopyOrder();
+  const { address: followerAddress, isConnected } = useAccount();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'fills' | 'edge'>('fills');
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
+  const [followOk, setFollowOk] = useState<string | null>(null);
+
+  const followRulesQuery = useQuery({
+    queryKey: [FOLLOW_RULES_QUERY_KEY, followerAddress],
+    queryFn: () => fetchFollowRules(followerAddress!),
+    enabled: isConnected && !!followerAddress,
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const existingRule = useMemo(() => {
+    const whale = (address ?? '').toLowerCase();
+    return (followRulesQuery.data?.rules ?? []).find(
+      (r) => r.whaleAddress.toLowerCase() === whale,
+    ) ?? null;
+  }, [followRulesQuery.data, address]);
+
+  const canPersistFollow = isConnected && !!followerAddress && !followRulesQuery.isError;
+
+  const handleAutoFollow = useCallback(async () => {
+    if (!followerAddress || !address) return;
+    setFollowBusy(true);
+    setFollowError(null);
+    setFollowOk(null);
+    try {
+      const rule: AutoCopyRule = existingRule
+        ? { ...existingRule, status: 'ACTIVE' }
+        : {
+            whaleAddress: address,
+            maxStake: 10,
+            slippageCap: 1,
+            status: 'ACTIVE',
+            autoRoll: false,
+            cashOutTarget: 150,
+            stopLossRounds: 3,
+            maxRounds: 20,
+            dailyCap: 100,
+          };
+      await saveFollowRule(followerAddress, rule);
+      await queryClient.invalidateQueries({ queryKey: [FOLLOW_RULES_QUERY_KEY, followerAddress] });
+      setFollowOk('Follow rule saved. Manage it under Settings → Monitored Whales.');
+    } catch (err) {
+      setFollowError(err instanceof Error ? err.message : 'Failed to save follow rule');
+    } finally {
+      setFollowBusy(false);
+    }
+  }, [followerAddress, address, existingRule, queryClient]);
 
   const equityDataPoints = useMemo(
     () => (data ? buildEquityCurvePoints(data.marketPnL, data.fills) : []),
@@ -267,14 +326,45 @@ export default function WhaleProfile() {
         </div>
 
         <div className="profile-actions">
-          <button
-            disabled
-            title="Auto-follow requires a live session-key authorization"
-            className="btn btn-outline disabled:opacity-50"
-          >
-            <Play className="w-4 h-4 mr-1" />
-            Auto-Follow unavailable
-          </button>
+          {canPersistFollow ? (
+            <button
+              type="button"
+              onClick={() => void handleAutoFollow()}
+              disabled={followBusy || (existingRule?.status === 'ACTIVE')}
+              title={
+                existingRule?.status === 'ACTIVE'
+                  ? 'Already following — edit the rule in Settings'
+                  : 'Save an Auto-Follow rule (persists locally; session key still required for worker copies)'
+              }
+              className={`btn disabled:opacity-40 disabled:cursor-not-allowed ${
+                existingRule?.status === 'ACTIVE' ? 'btn-outline' : 'btn-accent'
+              }`}
+            >
+              <Play className="w-4 h-4 mr-1" />
+              {followBusy
+                ? 'Saving…'
+                : existingRule?.status === 'ACTIVE'
+                  ? 'Following'
+                  : existingRule
+                    ? 'Resume Auto-Follow'
+                    : 'Auto-Follow'}
+            </button>
+          ) : (
+            <button
+              disabled
+              title={
+                !isConnected
+                  ? 'Connect your wallet to save an Auto-Follow rule'
+                  : followRulesQuery.isError
+                    ? 'Follow-rules API unavailable'
+                    : 'Auto-Follow requires a connected wallet'
+              }
+              className="btn btn-outline disabled:opacity-50"
+            >
+              <Play className="w-4 h-4 mr-1" />
+              Auto-Follow unavailable
+            </button>
+          )}
 
           <button
             onClick={() => {
@@ -293,6 +383,19 @@ export default function WhaleProfile() {
         </div>
       </div>
 
+      {followOk && (
+        <div className="p-4 bg-[var(--bg-card)] border border-[var(--border-accent)] rounded-lg flex items-center gap-3 animate-in text-sm">
+          <Check className="w-5 h-5 text-[var(--green)] shrink-0" />
+          <span>{followOk}{' '}
+            <Link href="/settings" className="text-[var(--accent)] underline">Open Settings</Link>
+          </span>
+        </div>
+      )}
+      {followError && (
+        <div className="p-4 bg-[var(--bg-card)] border border-[var(--red)]/40 rounded-lg text-sm text-[var(--red)] animate-in">
+          {followError}
+        </div>
+      )}
       {copyHash && (
         <div className="p-4 bg-[var(--bg-card)] border border-[var(--border-accent)] rounded-lg flex items-center gap-3 animate-in">
           <Check className="w-5 h-5 text-[var(--green)] shrink-0" />

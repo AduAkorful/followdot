@@ -19,7 +19,7 @@ const sample = (addr: string): AutoCopyRule => ({
 });
 
 describe('loadFollowRules', () => {
-  it('returns empty until persistence exists', () => {
+  it('sync stub stays empty (async fetch is the real path)', () => {
     expect(loadFollowRules()).toEqual([]);
     expect(loadFollowRules('0xabc')).toEqual([]);
   });
