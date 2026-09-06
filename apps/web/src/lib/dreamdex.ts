@@ -18,7 +18,13 @@ import {
   type BookTop,
   type Candle,
 } from "@somnia-chain/markets-sdk";
-import type { Address, Hex } from "viem";
+import {
+  createPublicClient,
+  erc20Abi,
+  http,
+  type Address,
+  type Hex,
+} from "viem";
 import { somniaChain, INDEXER_URL } from "../config/somnia";
 import { exposureHumanFromOpenPosition } from "./open-position-display";
 import { withRebuiltCostBasis } from "./rebuild-cost-basis";
@@ -46,12 +52,19 @@ const resolvedMarketsCache: ResolvedMarketsCache = {
   inflight: null,
 };
 
+/** WebSocket RPC — SDK chain reads (getMarketOnchain, balances) are WS-only. */
+const WS_RPC_URL = process.env.NEXT_PUBLIC_DREAMDEX_WS as string | undefined;
+/** HTTP RPC fallback when browser/server WS eth_call fails (balances). */
+const HTTP_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL as string | undefined;
+
 const exchange = INDEXER_URL
   ? new SomniaMarkets({
       chain: somniaChain,
       indexerUrl: INDEXER_URL,
       // Required for getMarketOnchain / collateral metadata (binaryModule).
       addresses: SOMNIA_TESTNET_ADDRESSES,
+      // Explicit WS — do not rely solely on chain.rpcUrls (client + server).
+      ...(WS_RPC_URL?.trim() ? { wsRpcUrl: WS_RPC_URL.trim() } : {}),
     })
   : null;
 
@@ -680,6 +693,53 @@ export async function computePerMarketPnL(
   return chunkedResults.flat();
 }
 
+
+/**
+ * Map indexer BinaryMarketStatus (incl. Finalized) onto on-chain MarketStatus ints.
+ * Finalized has no on-chain enum slot — treat like Resolved (4) for trading gates.
+ */
+export function binaryStatusToOnchainInt(
+  status: string | null | undefined,
+): number | null {
+  switch (status) {
+    case "Listed":
+      return 0;
+    case "Trading":
+      return 1;
+    case "Locked":
+      return 2;
+    case "Settling":
+      return 3;
+    case "Resolved":
+    case "Finalized":
+      return 4;
+    case "Voided":
+      return 5;
+    default:
+      return null;
+  }
+}
+
+/** True when a market is still in a copyable lifecycle (not settled/voided). */
+export function isCopyableMarketStatus(
+  status: string | null | undefined,
+  winningOutcome: number | null | undefined,
+  voided: boolean | null | undefined,
+): boolean {
+  if (voided) return false;
+  if (winningOutcome !== null && winningOutcome !== undefined) return false;
+  if (!status) return false;
+  return status === "Trading" || status === "Listed" || status === "Locked";
+}
+
+export type ResolvedMarketMeta = {
+  status: number;
+  expiry: bigint;
+  decimals: number;
+  collateral: Address;
+  source: "onchain" | "indexer";
+};
+
 // ─── F6: Pre-Trade Risk Gates ─────────────────────────────────────────
 
 export type RiskGateStatus = "pass" | "warn" | "block";
@@ -814,14 +874,18 @@ export function spreadBpsFromRawBookPrices(
  * Fetch authoritative on-chain market status for a binary market via
  * `getMarketOnchain` (chain-level truth, not indexer).
  * Requires SDK `addresses.binaryModule` (wired via SOMNIA_TESTNET_ADDRESSES).
+ *
+ * When the WS eth_call path fails (common in browsers), falls back to indexer
+ * `getBinaryMarket` so Active/Expiry/Collateral metadata can still resolve.
  */
 export async function fetchMarketStatus(
   marketId: string,
-): Promise<{ onchain: MarketOnchain | null; error: string | null }> {
+): Promise<{ onchain: MarketOnchain | null; meta: ResolvedMarketMeta | null; error: string | null }> {
   try {
     if (!/^0x[0-9a-fA-F]{64}$/.test(marketId)) {
       return {
         onchain: null,
+        meta: null,
         error:
           "getMarketOnchain expects bytes32 marketId, not a contract/pool address",
       };
@@ -831,11 +895,67 @@ export async function fetchMarketStatus(
       FETCH_TIMEOUT_MS,
       `getMarketOnchain(${marketId})`,
     );
-    return { onchain, error: null };
+    const meta: ResolvedMarketMeta = {
+      status: onchain.status,
+      expiry: onchain.expiry,
+      decimals: onchain.decimals,
+      collateral: onchain.collateral as Address,
+      source: "onchain",
+    };
+    return { onchain, meta, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[dreamdex] getMarketOnchain failed for ${marketId}:`, message);
-    return { onchain: null, error: message };
+
+    // Indexer fallback — market row carries status/expiry/collateral/quoteDecimals.
+    try {
+      const market = await withTimeout(
+        getClient().getBinaryMarket(marketId as Hex),
+        FETCH_TIMEOUT_MS,
+        `getBinaryMarket(fallback:${marketId})`,
+      );
+      if (!market) {
+        return { onchain: null, meta: null, error: `${message}; indexer market missing` };
+      }
+      const statusInt = binaryStatusToOnchainInt(market.status);
+      if (statusInt === null) {
+        return {
+          onchain: null,
+          meta: null,
+          error: `${message}; indexer status unmapped (${market.status})`,
+        };
+      }
+      if (!Number.isInteger(market.quoteDecimals) || market.quoteDecimals < 0) {
+        return {
+          onchain: null,
+          meta: null,
+          error: `${message}; indexer quoteDecimals unavailable`,
+        };
+      }
+      const expirySec = Number(market.expiry);
+      if (!Number.isFinite(expirySec)) {
+        return {
+          onchain: null,
+          meta: null,
+          error: `${message}; indexer expiry unavailable`,
+        };
+      }
+      const meta: ResolvedMarketMeta = {
+        status: statusInt,
+        expiry: BigInt(Math.trunc(expirySec)),
+        decimals: market.quoteDecimals,
+        collateral: market.collateral as Address,
+        source: "indexer",
+      };
+      return { onchain: null, meta, error: null };
+    } catch (indexerErr) {
+      const idxMsg = indexerErr instanceof Error ? indexerErr.message : String(indexerErr);
+      return {
+        onchain: null,
+        meta: null,
+        error: `${message}; indexer fallback failed: ${idxMsg}`,
+      };
+    }
   }
 }
 
@@ -859,6 +979,99 @@ export async function fetchMarketQuoteDecimals(
       err instanceof Error ? err.message : String(err),
     );
     return null;
+  }
+}
+
+/**
+ * Lightweight whale-open check via indexer OutcomeBalance — avoids
+ * getOpenPositionsWithPnL which times out on heavy whale portfolios.
+ */
+export async function fetchWhalePositionOpen(
+  whaleAddress: string,
+  marketId: string,
+): Promise<{ open: boolean; error: string | null }> {
+  try {
+    if (!whaleAddress || !/^0x[a-fA-F0-9]{40}$/.test(whaleAddress)) {
+      return { open: false, error: "Whale address unavailable" };
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(marketId)) {
+      return { open: false, error: "Invalid marketId for whale position check" };
+    }
+    const data = await gqlFetch<{
+      OutcomeBalance: Array<{
+        balance: string;
+        market: {
+          id: string;
+          winningOutcome: number | null;
+          voided: boolean;
+          clobStatus: string | null;
+        } | null;
+      }>;
+    }>(
+      `query($account: String!, $marketId: String!) {
+        OutcomeBalance(
+          where: {
+            account: { _eq: $account }
+            market_id: { _eq: $marketId }
+            balance: { _gt: "0" }
+          }
+          limit: 5
+        ) {
+          balance
+          market { id winningOutcome voided clobStatus }
+        }
+      }`,
+      {
+        account: whaleAddress.toLowerCase(),
+        marketId: marketId.toLowerCase(),
+      },
+    );
+    const rows = data.OutcomeBalance ?? [];
+    const stillOpen = rows.some((row) => {
+      const bal = Number(row.balance);
+      if (!Number.isFinite(bal) || bal <= 0) return false;
+      const m = row.market;
+      if (!m) return false;
+      return isCopyableMarketStatus(m.clobStatus, m.winningOutcome, m.voided);
+    });
+    return { open: stillOpen, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[dreamdex] whale position open check failed:`, message);
+    return { open: false, error: message };
+  }
+}
+
+/** ERC-20 balance in human units — SDK WS first, HTTP RPC fallback. */
+export async function fetchCollateralBalanceHuman(
+  token: Address,
+  account: Address,
+  decimals: number,
+): Promise<number> {
+  try {
+    const balance = await withTimeout(
+      getClient().getErc20Balance(token, account),
+      FETCH_TIMEOUT_MS,
+      `getErc20Balance(${account})`,
+    );
+    return Number(balance) / 10 ** decimals;
+  } catch (wsErr) {
+    if (!HTTP_RPC_URL?.trim()) throw wsErr;
+    const publicClient = createPublicClient({
+      chain: somniaChain,
+      transport: http(HTTP_RPC_URL.trim()),
+    });
+    const balance = await withTimeout(
+      publicClient.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [account],
+      }),
+      FETCH_TIMEOUT_MS,
+      `http balanceOf(${account})`,
+    );
+    return Number(balance) / 10 ** decimals;
   }
 }
 
@@ -926,40 +1139,48 @@ export async function checkMarketHealth(
   const gates: RiskGate[] = [];
   let collateralDecimals: number | null = null;
 
-  // ── Gates 1-2: on-chain market status (needs addresses.binaryModule) ──
-  // Fetch indexer quoteDecimals in parallel so spread can scale even if RPC fails.
-  const [{ onchain, error: onchainError }, indexerDecimals] = await Promise.all([
+  // ── Gates 1-2: market status (on-chain preferred; indexer fallback) ──
+  // Quote decimals + whale-open + book in parallel so a hung portfolio path
+  // cannot starve Active/Expiry/Collateral.
+  const [
+    { meta, error: onchainError },
+    indexerDecimals,
+    whaleOpen,
+  ] = await Promise.all([
     fetchMarketStatus(marketId),
     fetchMarketQuoteDecimals(marketId),
+    params.whaleAddress
+      ? fetchWhalePositionOpen(params.whaleAddress, marketId)
+      : Promise.resolve({ open: false, error: "Whale address unavailable" as string | null }),
   ]);
+
   const quoteDecimals =
-    onchain && Number.isInteger(onchain.decimals) && onchain.decimals >= 0
-      ? onchain.decimals
+    meta && Number.isInteger(meta.decimals) && meta.decimals >= 0
+      ? meta.decimals
       : indexerDecimals;
 
-  if (onchain) {
-    // Gate 1: Market active
-    const isActive = onchain.status === TRADING_STATUS;
+  if (meta) {
+    const isActive = meta.status === TRADING_STATUS;
+    const sourceNote = meta.source === "indexer" ? " (indexer)" : "";
     gates.push({
       id: "market-active",
       label: "Market Active",
       status: isActive ? "pass" : "block",
       detail: isActive
-        ? "Market is in Trading state"
-        : `Market status is ${onchain.status} (need Trading=1)`,
+        ? `Market is in Trading state${sourceNote}`
+        : `Market status is ${meta.status} (need Trading=1)${sourceNote}`,
     });
 
-    // Gate 2: Expiry headroom
     const nowSec = Math.floor(Date.now() / 1000);
-    const timeLeft = Number(onchain.expiry) - nowSec;
+    const timeLeft = Number(meta.expiry) - nowSec;
     const hasHeadroom = timeLeft >= MIN_EXPIRY_HEADROOM_S;
     gates.push({
       id: "expiry-headroom",
       label: "Expiry Headroom",
       status: hasHeadroom ? "pass" : "block",
       detail: hasHeadroom
-        ? `${timeLeft}s remaining before expiry`
-        : `Only ${timeLeft}s remaining (minimum ${MIN_EXPIRY_HEADROOM_S}s)`,
+        ? `${timeLeft}s remaining before expiry${sourceNote}`
+        : `Only ${timeLeft}s remaining (minimum ${MIN_EXPIRY_HEADROOM_S}s)${sourceNote}`,
     });
   } else {
     const reason = onchainError ?? "unknown error";
@@ -979,22 +1200,30 @@ export async function checkMarketHealth(
     );
   }
 
-  // The copied signal must still be an open whale position.
-  if (params.whaleAddress) {
-    try {
-      const whalePositions = await fetchTraderOpenPositions(params.whaleAddress);
-      const stillOpen = whalePositions.some((position) => position.market.id.toLowerCase() === marketId.toLowerCase());
-      gates.push({
-        id: "whale-position-open",
-        label: "Whale Position Open",
-        status: stillOpen ? "pass" : "block",
-        detail: stillOpen ? "Whale position is still open" : "Whale position is settled or unavailable",
-      });
-    } catch {
-      gates.push({ id: "whale-position-open", label: "Whale Position Open", status: "block", detail: "Unable to verify whale position" });
-    }
+  // The copied signal must still be an open whale position on a live market.
+  if (whaleOpen.error && !params.whaleAddress) {
+    gates.push({
+      id: "whale-position-open",
+      label: "Whale Position Open",
+      status: "block",
+      detail: "Whale address unavailable",
+    });
+  } else if (whaleOpen.error) {
+    gates.push({
+      id: "whale-position-open",
+      label: "Whale Position Open",
+      status: "block",
+      detail: `Unable to verify whale position: ${whaleOpen.error}`,
+    });
   } else {
-    gates.push({ id: "whale-position-open", label: "Whale Position Open", status: "block", detail: "Whale address unavailable" });
+    gates.push({
+      id: "whale-position-open",
+      label: "Whale Position Open",
+      status: whaleOpen.open ? "pass" : "block",
+      detail: whaleOpen.open
+        ? "Whale position is still open"
+        : "Whale position is settled or unavailable",
+    });
   }
 
   // Gate 4: Spread check (human YES-probability bps; never raw book ints)
@@ -1046,32 +1275,32 @@ export async function checkMarketHealth(
     });
   }
 
-  // Gate 6: Collateral check
+  // Gate 6: Collateral check (metadata from onchain/indexer; balance WS then HTTP)
   try {
-    if (!onchain) {
+    if (!meta) {
       throw new Error(
         onchainError
           ? `Market collateral metadata unavailable (${onchainError})`
           : "Market collateral metadata unavailable",
       );
     }
-    const collateral = onchain.collateral as Address;
-    const decimals = onchain.decimals;
+    const collateral = meta.collateral;
+    const decimals = meta.decimals;
     collateralDecimals = decimals;
-    const balance = await withTimeout(
-      getClient().getErc20Balance(collateral, userAddress as Address),
-      FETCH_TIMEOUT_MS,
-      `getErc20Balance(${userAddress})`,
+    const balanceHuman = await fetchCollateralBalanceHuman(
+      collateral,
+      userAddress as Address,
+      decimals,
     );
-    const balanceHuman = Number(balance) / 10 ** decimals;
     const hasCollateral = balanceHuman >= stakeHuman;
+    const sourceNote = meta.source === "indexer" ? " (indexer meta)" : "";
     gates.push({
       id: "collateral-check",
       label: "Collateral Check",
       status: hasCollateral ? "pass" : "block",
       detail: hasCollateral
-        ? `Balance $${balanceHuman.toFixed(2)} ≥ stake $${stakeHuman.toFixed(2)}`
-        : `Insufficient collateral (have $${balanceHuman.toFixed(2)}, need $${stakeHuman.toFixed(2)})`,
+        ? `Balance $${balanceHuman.toFixed(2)} ≥ stake $${stakeHuman.toFixed(2)}${sourceNote}`
+        : `Insufficient collateral (have $${balanceHuman.toFixed(2)}, need $${stakeHuman.toFixed(2)})${sourceNote}`,
     });
   } catch (err) {
     gates.push({

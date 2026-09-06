@@ -28,6 +28,7 @@ import {
   fetchTraderOpenPositions,
   buildMarketMap,
   computePerMarketPnL,
+  isCopyableMarketStatus,
 } from "./dreamdex";
 import type { FillRow, BinaryMarket } from "@somnia-chain/markets-sdk";
 import { mapHonestOpenPositionMoney } from "./open-position-display";
@@ -137,6 +138,16 @@ function mapOpenPositions(
   fills: FillRow[],
 ) {
   return positions.flatMap((position) => {
+    // Claimable/settled balances are not copyable open positions.
+    if (
+      !isCopyableMarketStatus(
+        position.market.status,
+        position.market.winningOutcome ?? null,
+        position.market.voided,
+      )
+    ) {
+      return [];
+    }
     const money = mapHonestOpenPositionMoney(
       withRebuiltCostBasis(position, account, fills),
     );
