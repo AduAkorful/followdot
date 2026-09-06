@@ -31,6 +31,20 @@ const MAX_CONCURRENT_MARKET_READS = 8;
 const MAX_MARKETS_BY_FILL_ID = 80;
 const TRADER_FILL_PAGE_SIZE = 200;
 const RESOLVED_MARKET_PAGE_SIZE = 200;
+/** In-process TTL for resolved market lists (shared by leaderboard + profiles). */
+const RESOLVED_MARKETS_TTL_MS = 60_000;
+
+type ResolvedMarketsCache = {
+  expiresAt: number;
+  data: BinaryMarket[];
+  inflight: Promise<BinaryMarket[]> | null;
+};
+
+const resolvedMarketsCache: ResolvedMarketsCache = {
+  expiresAt: 0,
+  data: [],
+  inflight: null,
+};
 
 const exchange = INDEXER_URL
   ? new SomniaMarkets({
@@ -180,6 +194,80 @@ export function extractTopTraders(fills: FillRow[], maxTraders = 20): string[] {
 // ─── Per-trader data ────────────────────────────────────────────────
 
 /**
+ * Batch-fetch binary fills for many wallets in one indexer round-trip.
+ * Used by the leaderboard to avoid N sequential UserBinaryFillsDirect calls.
+ * Fills are partitioned by maker/taker address (lowercased).
+ */
+export async function fetchTradersFillsBatched(
+  accounts: string[],
+  limit = 2000,
+  signal?: AbortSignal,
+): Promise<Map<string, FillRow[]>> {
+  const accts = [...new Set(accounts.map((a) => a.toLowerCase()))].filter((a) =>
+    /^0x[a-f0-9]{40}$/.test(a),
+  );
+  const byTrader = new Map<string, FillRow[]>();
+  for (const a of accts) byTrader.set(a, []);
+  if (accts.length === 0) return byTrader;
+
+  const q = `
+    query BatchBinaryFills($accts: [String!]!, $limit: Int!) {
+      Fill(
+        where: {
+          _and: [
+            { market: { marketType: { _eq: "BINARY" } } },
+            { _or: [{ maker: { _in: $accts } }, { taker: { _in: $accts } }] }
+          ]
+        },
+        limit: $limit,
+        order_by: [{ timestamp: desc }, { blockNumber: desc }]
+      ) {
+        id market { id } pool maker taker makerSide takerSide
+        fillPrice quantity quoteQuantity timestamp
+        takerOrder { owner side } kind
+      }
+    }
+  `;
+
+  const rows = await withTimeout(
+    fetch(INDEXER_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: q, variables: { accts, limit } }),
+      signal,
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = (await r.json()) as {
+        data?: { Fill?: Array<Omit<FillRow, "market"> & { market: { id: string } | string }> };
+        errors?: unknown[];
+      };
+      if (d.errors && d.errors.length > 0) {
+        throw new Error(`BatchBinaryFills GraphQL error: ${JSON.stringify(d.errors)}`);
+      }
+      return (d.data?.Fill ?? []).map((row) => ({
+        ...row,
+        market: typeof row.market === "string" ? row.market : row.market.id,
+      })) as FillRow[];
+    }),
+    FETCH_TIMEOUT_MS,
+    `batchUserFills(${accts.length})`,
+  );
+
+  for (const fill of rows) {
+    const participants = new Set<string>();
+    if (fill.maker) participants.add(fill.maker.toLowerCase());
+    if (fill.taker) participants.add(fill.taker.toLowerCase());
+    for (const addr of participants) {
+      const bucket = byTrader.get(addr);
+      if (!bucket) continue;
+      bucket.push(fill);
+    }
+  }
+  return byTrader;
+}
+
+
+/**
  * Fetch all fills for a specific trader across all markets.
  * Pages to exhaustion (up to MAX_TRADER_FILL_PAGES pages) to avoid
  * truncating whale history.
@@ -248,28 +336,64 @@ export async function fetchTraderFills(
  * skill scoring — we need to know which outcome won.
  */
 export async function fetchResolvedMarkets(signal?: AbortSignal): Promise<BinaryMarket[]> {
-  const resolved: BinaryMarket[] = [];
-  let offset = 0;
-  const limit = RESOLVED_MARKET_PAGE_SIZE;
-
-  for (let page = 0; page < MAX_RESOLVED_PAGES; page++) {
-    if (signal?.aborted) break;
-    const batch = await withTimeout(
-      getClient().listPastBinaryMarkets({ limit, offset }),
-      FETCH_TIMEOUT_MS,
-      "listPastBinaryMarkets",
-    );
-    if (batch.length === 0) break;
-    resolved.push(
-      ...batch.filter(
-        (m): m is BinaryMarket => m.winningOutcome !== null || m.voided,
-      ),
-    );
-    if (batch.length < limit) break;
-    offset += batch.length;
+  const now = Date.now();
+  if (resolvedMarketsCache.data.length > 0 && now < resolvedMarketsCache.expiresAt) {
+    return resolvedMarketsCache.data;
+  }
+  if (resolvedMarketsCache.inflight) {
+    return resolvedMarketsCache.inflight;
   }
 
-  return resolved;
+  const inflight = (async () => {
+    const limit = RESOLVED_MARKET_PAGE_SIZE;
+    // Known offsets — fan out pages in parallel instead of waiting serially
+    // (was up to 10 × indexer RTT on the critical path).
+    const batches = await Promise.all(
+      Array.from({ length: MAX_RESOLVED_PAGES }, (_, page) => page).map(async (page) => {
+        if (signal?.aborted) return [] as BinaryMarket[];
+        const offset = page * limit;
+        try {
+          return await withTimeout(
+            getClient().listPastBinaryMarkets({ limit, offset }),
+            FETCH_TIMEOUT_MS,
+            `listPastBinaryMarkets(offset=${offset})`,
+          );
+        } catch (err) {
+          console.warn(
+            `[dreamdex] listPastBinaryMarkets offset=${offset} failed:`,
+            err instanceof Error ? err.message : String(err),
+          );
+          return [] as BinaryMarket[];
+        }
+      }),
+    );
+
+    const resolved: BinaryMarket[] = [];
+    for (const batch of batches) {
+      // Preserve page order; stop at first empty/short page so a failed
+      // middle page does not append stale deeper offsets out of order.
+      if (batch.length === 0) break;
+      resolved.push(
+        ...batch.filter(
+          (m): m is BinaryMarket => m.winningOutcome !== null || m.voided,
+        ),
+      );
+      if (batch.length < limit) break;
+    }
+
+    resolvedMarketsCache.data = resolved;
+    resolvedMarketsCache.expiresAt = Date.now() + RESOLVED_MARKETS_TTL_MS;
+    return resolved;
+  })();
+
+  resolvedMarketsCache.inflight = inflight;
+  try {
+    return await inflight;
+  } finally {
+    if (resolvedMarketsCache.inflight === inflight) {
+      resolvedMarketsCache.inflight = null;
+    }
+  }
 }
 
 /**
@@ -421,11 +545,22 @@ export function marketWonFromSide(
 // ─── PnL computation ────────────────────────────────────────────────
 
 /** Compute per-market realized + unrealised PnL for one trader. */
+export type ComputePerMarketPnLOptions = {
+  /**
+   * When true (default), resolved/voided markets skip getOutcomeBalances and
+   * reconstruct settlement PnL from fills. Unresolved markets still RPC.
+   * Skill scoring only needs settled markets; this removes the N balance RPCs
+   * that dominated `/api/whales` latency.
+   */
+  preferSettledFills?: boolean;
+};
+
 export async function computePerMarketPnL(
   account: string,
   fills: FillRow[],
   marketMap: Map<string, BinaryMarket>,
   signal?: AbortSignal,
+  options?: ComputePerMarketPnLOptions,
 ): Promise<
   {
     marketId: string;
@@ -438,6 +573,7 @@ export async function computePerMarketPnL(
     quoteDecimals: number;
   }[]
 > {
+  const preferSettledFills = options?.preferSettledFills !== false;
   // Group fills by market
   const byMarket = new Map<string, FillRow[]>();
   for (const f of fills) {
@@ -477,11 +613,16 @@ export async function computePerMarketPnL(
     chunks.map((chunk) =>
       Promise.all(
         chunk.map(async ({ marketId, market, pnlFills }) => {
-          const balances = await withTimeout(
-            getClient().getOutcomeBalances(account, market.marketAddress),
-            FETCH_TIMEOUT_MS,
-            `getOutcomeBalances(${account}, ${marketId})`,
-          );
+          const settled =
+            market.winningOutcome != null || market.voided === true;
+          const balances: OutcomeBalances =
+            preferSettledFills && settled
+              ? { yes: "0", no: "0" }
+              : await withTimeout(
+                  getClient().getOutcomeBalances(account, market.marketAddress),
+                  FETCH_TIMEOUT_MS,
+                  `getOutcomeBalances(${account}, ${marketId})`,
+                );
 
           const marketPick = {
             quoteDecimals: market.quoteDecimals,
@@ -610,13 +751,28 @@ export async function fetchUserExposure(
   }
 }
 
-/** Fetch open binary positions for a wallet from the live SDK portfolio. */
-export async function fetchTraderOpenPositions(userAddress: string): Promise<OpenPositionPnL[]> {
-  return withTimeout(
-    getClient().getOpenPositionsWithPnL(userAddress),
-    FETCH_TIMEOUT_MS,
-    `getOpenPositionsWithPnL(${userAddress})`,
-  );
+/** Fetch open binary positions for a wallet from the live SDK portfolio.
+ * Soft-fails to [] so profile KPIs are not blocked by a hung portfolio RPC.
+ * `timeoutMs` defaults to FETCH_TIMEOUT_MS; profile critical path passes a
+ * tighter budget so a stuck portfolio call cannot dominate TTFB.
+ */
+export async function fetchTraderOpenPositions(
+  userAddress: string,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<OpenPositionPnL[]> {
+  try {
+    return await withTimeout(
+      getClient().getOpenPositionsWithPnL(userAddress),
+      timeoutMs,
+      `getOpenPositionsWithPnL(${userAddress})`,
+    );
+  } catch (err) {
+    console.warn(
+      `[dreamdex] getOpenPositionsWithPnL failed for ${userAddress}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
 }
 
 /**

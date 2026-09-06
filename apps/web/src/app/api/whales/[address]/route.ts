@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchWhaleProfileCore } from "@/lib/whale-profile";
+import { getCachedWhaleProfileCore } from "@/lib/whale-profile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -7,9 +7,10 @@ export const maxDuration = 60;
 /**
  * Critical-path whale profile (score, marketPnL, fills, openPositions).
  * Edge/calibration live under /analytics so KPIs are not blocked by 2×N RPCs.
+ * Served from in-process SWR cache after the first warm.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ address: string }> },
 ) {
   const { address } = await context.params;
@@ -18,12 +19,20 @@ export async function GET(
   }
 
   try {
-    const profile = await fetchWhaleProfileCore(address);
+    const t0 = Date.now();
+    const { cache, ...profile } = await getCachedWhaleProfileCore(
+      address,
+      request.signal,
+    );
+    const ms = Date.now() - t0;
+    console.info(`[api/whales/${address}] cache=${cache} ${ms}ms`);
     return NextResponse.json(
       { profile, generatedAt: new Date().toISOString() },
       {
         headers: {
-          "Cache-Control": "s-maxage=30, stale-while-revalidate=60",
+          "Cache-Control": "s-maxage=30, stale-while-revalidate=120",
+          "X-Followdot-Cache": cache,
+          "X-Followdot-Elapsed-Ms": String(ms),
         },
       },
     );

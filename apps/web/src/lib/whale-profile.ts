@@ -33,6 +33,18 @@ import type { FillRow, BinaryMarket } from "@somnia-chain/markets-sdk";
 import { mapHonestOpenPositionMoney } from "./open-position-display";
 import { withRebuiltCostBasis } from "./rebuild-cost-basis";
 
+const PROFILE_CORE_FRESH_MS = 30_000;
+const PROFILE_CORE_STALE_MS = 120_000;
+
+type ProfileCoreCacheEntry = {
+  expiresAt: number;
+  staleUntil: number;
+  profile: WhaleProfileCore;
+  inflight: Promise<WhaleProfileCore> | null;
+};
+
+const profileCoreCache = new Map<string, ProfileCoreCacheEntry>();
+
 export interface WhaleMarketPnL {
   marketId: string;
   marketAddress: string;
@@ -160,10 +172,12 @@ export async function fetchWhaleProfileCore(
 
   const normalizedAddr = address.toLowerCase();
 
+  // Critical path: prefer settled-fill scoring + soft-failed open positions.
+  // Cap fills at 400 (2 pages) so profile KPIs are not blocked by deep history.
   const [resolvedMarkets, fills, rawOpenPositions] = await Promise.all([
     fetchResolvedMarkets(signal),
-    fetchTraderFills(normalizedAddr, 1000, signal),
-    fetchTraderOpenPositions(normalizedAddr),
+    fetchTraderFills(normalizedAddr, 400, signal),
+    fetchTraderOpenPositions(normalizedAddr, 3_000),
   ]);
   const openPositions = mapOpenPositions(rawOpenPositions, normalizedAddr, fills);
 
@@ -195,6 +209,7 @@ export async function fetchWhaleProfileCore(
     fills,
     marketMap,
     signal,
+    { preferSettledFills: true },
   );
 
   const marketResults: MarketResult[] = marketPnL.map((r) => ({
@@ -441,4 +456,89 @@ async function computeEdges(
   }
 
   return edges;
+}
+
+/** In-process SWR cache for critical-path whale profile responses. */
+export async function getCachedWhaleProfileCore(
+  address: string,
+  signal?: AbortSignal,
+): Promise<WhaleProfileCore & { cache: "fresh" | "stale" | "miss" }> {
+  const key = address.toLowerCase();
+  const now = Date.now();
+  const cached = profileCoreCache.get(key);
+
+  if (cached && now < cached.expiresAt) {
+    return { ...cached.profile, cache: "fresh" };
+  }
+
+  if (cached && now < cached.staleUntil) {
+    if (!cached.inflight) {
+      const refresh = fetchWhaleProfileCore(key)
+        .then((profile) => {
+          profileCoreCache.set(key, {
+            expiresAt: Date.now() + PROFILE_CORE_FRESH_MS,
+            staleUntil: Date.now() + PROFILE_CORE_STALE_MS,
+            profile,
+            inflight: null,
+          });
+          return profile;
+        })
+        .catch((err) => {
+          console.error(
+            "[whale-profile] background refresh failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          const entry = profileCoreCache.get(key);
+          if (entry) entry.inflight = null;
+          return cached.profile;
+        });
+      cached.inflight = refresh;
+    }
+    return { ...cached.profile, cache: "stale" };
+  }
+
+  if (cached?.inflight) {
+    const profile = await cached.inflight;
+    return { ...profile, cache: "miss" };
+  }
+
+  const inflight = fetchWhaleProfileCore(key, signal);
+  profileCoreCache.set(key, {
+    expiresAt: 0,
+    staleUntil: 0,
+    profile: {
+      address: key,
+      score: {
+        address: key,
+        score: 0,
+        winRate: 0,
+        bayesianWinRate: 0,
+        consistencyFactor: 0,
+        variancePenalty: 0,
+        totalMarkets: 0,
+        totalRealizedPnL: 0,
+        lastUpdated: Date.now(),
+      },
+      marketPnL: [],
+      fills: [],
+      quoteDecimalsByMarket: {},
+      openPositions: [],
+      winRateByMarketType: [],
+    },
+    inflight,
+  });
+
+  try {
+    const profile = await inflight;
+    profileCoreCache.set(key, {
+      expiresAt: Date.now() + PROFILE_CORE_FRESH_MS,
+      staleUntil: Date.now() + PROFILE_CORE_STALE_MS,
+      profile,
+      inflight: null,
+    });
+    return { ...profile, cache: "miss" };
+  } catch (err) {
+    profileCoreCache.delete(key);
+    throw err;
+  }
 }

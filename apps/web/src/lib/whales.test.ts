@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { extractTopTraders, parseWhaleLeaderboardPayload } from '@/lib/whales';
+import {
+  extractTopTraders,
+  parseWhaleLeaderboardPayload,
+  WHALE_LEADERBOARD_FRESH_MS,
+  WHALE_LEADERBOARD_STALE_MS,
+} from '@/lib/whales';
 import type { FillRow } from '@somnia-chain/markets-sdk';
 
 describe('extractTopTraders', () => {
@@ -95,5 +100,13 @@ describe('parseWhaleLeaderboardPayload', () => {
   it('uses whales.length when count is absent', () => {
     const payload = parseWhaleLeaderboardPayload({ whales: [{}, {}] });
     expect(payload.count).toBe(2);
+  });
+});
+
+
+describe("leaderboard cache windows", () => {
+  it("keeps fresh window shorter than stale-while-revalidate window", () => {
+    expect(WHALE_LEADERBOARD_FRESH_MS).toBe(30_000);
+    expect(WHALE_LEADERBOARD_STALE_MS).toBeGreaterThan(WHALE_LEADERBOARD_FRESH_MS);
   });
 });

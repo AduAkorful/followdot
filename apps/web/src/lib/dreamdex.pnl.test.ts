@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeHonestBinaryPnl, marketWonFromSide } from "./dreamdex";
+import { computeHonestBinaryPnl, marketWonFromSide, type ComputePerMarketPnLOptions } from "./dreamdex";
 import type { BinaryPnlFill, OutcomeBalances } from "@somnia-chain/markets-sdk";
 
 const marketResolvedYes = {
@@ -81,4 +81,16 @@ describe("marketWonFromSide", () => {
     expect(marketWonFromSide({ winningOutcome: null, voided: false }, true)).toBeUndefined();
     expect(marketWonFromSide({ winningOutcome: 0, voided: true }, true)).toBeUndefined();
   });
+});
+
+describe("ComputePerMarketPnLOptions", () => {
+
+  it("documents preferSettledFills as optional boolean", () => {
+
+    const opts: ComputePerMarketPnLOptions = { preferSettledFills: true };
+
+    expect(opts.preferSettledFills).toBe(true);
+
+  });
+
 });

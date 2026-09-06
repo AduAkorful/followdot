@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   mergeWhaleProfile,
   type WhaleProfileAnalytics,
@@ -55,7 +55,8 @@ export function useWhaleProfile(address: string) {
       const core = await fetchWhaleProfileCoreApi(address, signal);
       return mergeWhaleProfile(core, null);
     },
-    staleTime: 60_000,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
     retry: 1,
     retryDelay: 5_000,
     enabled: !!address && /^0x[a-fA-F0-9]{40}$/.test(address),

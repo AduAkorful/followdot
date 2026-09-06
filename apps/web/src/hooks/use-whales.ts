@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   parseWhaleLeaderboardPayload,
   type WhaleLeaderboardPayload,
@@ -30,7 +30,9 @@ export function useWhaleLeaderboard(limit = 20) {
   return useQuery<WhaleLeaderboardPayload, Error>({
     queryKey: [WHALE_QUERY_KEY, limit],
     queryFn: ({ signal }) => fetchWhaleLeaderboardApi(limit, signal),
-    staleTime: 60_000,
+    staleTime: 30_000,
+    // Keep last snapshot painted while a background refresh runs — avoids blanking home.
+    placeholderData: keepPreviousData,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     retry: 1,

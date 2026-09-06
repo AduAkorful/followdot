@@ -7,6 +7,7 @@ import { Sparkline } from '@/components/sparkline';
 import { Pagination } from '@/components/pagination';
 import { formatSignedUsd, formatSnapshotLabel, sumNetRealizedPnL } from '@/lib/whale-display';
 import { Search, Loader2, AlertCircle } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 
 function shortenAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -25,9 +26,10 @@ function formatPnL(pnl: number): string {
 }
 
 export default function Home() {
-  const { data, isLoading, isError, error } = useWhaleLeaderboard(50);
+  const { data, isLoading, isFetching, isError, error } = useWhaleLeaderboard(20);
   const whales = data?.whales ?? [];
   const snapshotLabel = formatSnapshotLabel(data?.generatedAt);
+  const showInitialSkeleton = isLoading && whales.length === 0;
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState<'skill' | 'calibration'>('skill');
@@ -150,27 +152,45 @@ export default function Home() {
         </div>
 
         <div className="card-body p-0 mt-4 overflow-x-auto">
-          {isLoading && (
-            <div className="flex items-center justify-center py-16 text-[var(--text-muted)]">
-              <Loader2 className="h-6 w-6 animate-spin mr-2" />
-              Indexing on-chain market fills…
+          {isFetching && whales.length > 0 && (
+            <div className="flex items-center gap-2 px-4 py-2 text-xs text-[var(--text-muted)] border-b border-[var(--border)]">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Refreshing leaderboard…
             </div>
           )}
 
-          {isError && (
+          {showInitialSkeleton && (
+            <div className="p-4 space-y-3" aria-busy="true" aria-label="Loading whale leaderboard">
+              <div className="flex items-center gap-2 text-sm text-[var(--text-muted)] mb-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading cached leaderboard from indexer…
+              </div>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-4 w-8 bg-[var(--surface-2)]" />
+                  <Skeleton className="h-8 w-8 rounded-full bg-[var(--surface-2)]" />
+                  <Skeleton className="h-4 flex-1 bg-[var(--surface-2)]" />
+                  <Skeleton className="h-4 w-16 bg-[var(--surface-2)]" />
+                  <Skeleton className="h-4 w-20 bg-[var(--surface-2)]" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isError && whales.length === 0 && (
             <div className="flex items-center justify-center py-12 text-[var(--red)]">
               <AlertCircle className="h-5 w-5 mr-2" />
               Failed to load leaderboard: {error?.message}
             </div>
           )}
 
-          {!isLoading && !isError && filtered.length === 0 && (
+          {!showInitialSkeleton && !isError && filtered.length === 0 && (
             <div className="text-center py-16 text-[var(--text-muted)]">
               {search ? 'No wallets match your search.' : 'No active whales found on Somnia testnet.'}
             </div>
           )}
 
-          {!isLoading && !isError && filtered.length > 0 && (
+          {!showInitialSkeleton && filtered.length > 0 && (
             <table className="data-table">
               <thead>
                 <tr>
@@ -259,7 +279,7 @@ export default function Home() {
             </table>
           )}
 
-          {!isLoading && !isError && totalEntries > 0 && (
+          {!showInitialSkeleton && totalEntries > 0 && (
             <Pagination
               currentPage={currentPage}
               totalItems={totalEntries}
