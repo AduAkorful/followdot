@@ -26,6 +26,7 @@
 
   --green: #22C55E;
   --red: #EF4444;
+  --amber: #F59E0B;
   --blue: #3B82F6;
 
   --border: rgba(255, 255, 255, 0.07);
@@ -477,6 +478,7 @@ body {
 .badge-accent { color: var(--accent); background: var(--bg-badge); }
 .badge-green { color: var(--green); background: rgba(34,197,94,0.12); }
 .badge-red { color: var(--red); background: rgba(239,68,68,0.12); }
+.badge-amber { color: var(--amber); background: rgba(245,158,11,0.12); }
 .badge-outline { color: var(--text-secondary); background: transparent; border: 1px solid var(--border); }
 
 .btn {

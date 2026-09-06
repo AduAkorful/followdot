@@ -53,6 +53,11 @@ export function CopyOrderModal({
 
   const canPlaceOrder = hasMarketContext && (health?.canProceed ?? false);
   const blockedGates = (health?.gates ?? []).filter((g) => g.status === "block");
+  const placeBlocked =
+    isPlacing ||
+    (hasMarketContext && !canPlaceOrder) ||
+    (hasMarketContext && riskLoading);
+  const showBlockedOutline = hasMarketContext && !canPlaceOrder && !isPlacing && !riskLoading;
 
   const handleCopyAddress = async () => {
     try {
@@ -88,7 +93,7 @@ export function CopyOrderModal({
       case "pass":
         return <CheckCircle className="w-4 h-4 text-[var(--green)]" />;
       case "warn":
-        return <AlertTriangle className="w-4 h-4 text-[var(--amber)]" />;
+        return <AlertTriangle className="w-4 h-4 text-[var(--amber,#F59E0B)]" />;
       case "block":
         return <AlertCircle className="w-4 h-4 text-[var(--red)]" />;
     }
@@ -98,36 +103,60 @@ export function CopyOrderModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Copy {shortenAddress(whaleAddress)}</DialogTitle>
+          <DialogTitle className="text-lg font-bold">
+            1-Click Copy · {shortenAddress(whaleAddress)}
+          </DialogTitle>
           <DialogDescription>
-            Place a one-click copy order mirroring this whale position.
-            Your wallet will sign and execute the order on DreamDEX.
+            Mirror this whale on DreamDEX. Your wallet signs and executes the order.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="space-y-4">
+          {/* Stake summary */}
+          <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-body)] p-3">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                  Estimated stake
+                </div>
+                <div className="mt-1 font-mono text-xl font-bold text-[var(--accent)]">
+                  ${estimatedCopyAmount.toFixed(2)}
+                </div>
+              </div>
+              <div className="text-right text-xs text-[var(--text-secondary)]">
+                <div>{bankrollPct}% of bankroll</div>
+                <div className="font-mono">cap ${maxNotional.toFixed(0)} · {slippage}% slip</div>
+              </div>
+            </div>
+          </div>
+
           {/* F6: Risk Check Section — only when market context is available */}
           {hasMarketContext && (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Risk Check</Label>
+                <Label className="text-sm font-medium text-[var(--text-primary)]">Risk gates</Label>
                 {riskLoading && <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)]" />}
               </div>
 
               {riskError && (
-                <div className="text-xs text-[var(--red)]">
+                <div className="rounded-[var(--radius-md)] border border-[var(--red)]/30 bg-[var(--red)]/10 p-3 text-xs text-[var(--red)]">
                   Failed to load risk gates: {riskError instanceof Error ? riskError.message : String(riskError)}
                 </div>
               )}
 
               {health && (
-                <div className="space-y-2">
-                  {health.gates.map((gate) => (
-                    <div key={gate.id} className="flex items-start gap-3 text-sm">
+                <div className="overflow-hidden rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-body)]">
+                  {health.gates.map((gate, idx) => (
+                    <div
+                      key={gate.id}
+                      className={`flex items-start gap-3 px-3 py-2.5 text-sm ${
+                        idx > 0 ? "border-t border-[var(--border)]" : ""
+                      }`}
+                    >
                       <div className="mt-0.5 shrink-0">{getRiskIcon(gate.status)}</div>
-                      <div className="flex-1">
-                        <div className="font-medium">{gate.label}</div>
-                        <div className="text-xs text-[var(--text-secondary)] mt-0.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-[var(--text-primary)]">{gate.label}</div>
+                        <div className="mt-0.5 text-xs leading-relaxed text-[var(--text-secondary)]">
                           {gate.detail}
                         </div>
                       </div>
@@ -137,8 +166,8 @@ export function CopyOrderModal({
               )}
 
               {health && !canPlaceOrder && (
-                <div className="p-3 bg-[var(--red)]/10 border border-[var(--red)]/30 rounded-lg flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-[var(--red)] shrink-0 mt-0.5" />
+                <div className="flex items-start gap-2 rounded-[var(--radius-md)] border border-[var(--red)]/30 bg-[var(--red)]/10 p-3">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--red)]" />
                   <div className="text-xs text-[var(--red)]">
                     <span className="font-medium">Cannot proceed.</span>
                     {" "}
@@ -148,9 +177,9 @@ export function CopyOrderModal({
               )}
 
               {health?.hasWarnings && canPlaceOrder && (
-                <div className="p-3 bg-[var(--amber)]/10 border border-[var(--amber)]/30 rounded-lg flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-[var(--amber)] shrink-0 mt-0.5" />
-                  <div className="text-xs text-[var(--amber)]">
+                <div className="flex items-start gap-2 rounded-[var(--radius-md)] border border-[var(--amber,#F59E0B)]/30 bg-[var(--amber,#F59E0B)]/10 p-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--amber,#F59E0B)]" />
+                  <div className="text-xs text-[var(--amber,#F59E0B)]">
                     <span className="font-medium">Warnings present.</span>
                     {" "}
                     You can proceed, but review the amber gates above.
@@ -160,60 +189,70 @@ export function CopyOrderModal({
             </div>
           )}
 
-          {/* Bankroll allocation */}
-          <div>
-            <Label className="text-sm">Bankroll allocation</Label>
-            <Slider
-              value={[bankrollPct]}
-              onValueChange={(v: number | readonly number[]) =>
-                setBankrollPct(Array.isArray(v) ? v[0] : v)
-              }
-              max={100}
-              min={1}
-              step={1}
-              disabled={isPlacing}
-            />
-            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>1%</span>
-              <span>{bankrollPct}% of bankroll</span>
-              <span>100%</span>
+          {/* Allocation controls */}
+          <div className="space-y-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-body)] p-3">
+            <div>
+              <Label className="text-sm text-[var(--text-primary)]">Bankroll allocation</Label>
+              <Slider
+                value={[bankrollPct]}
+                onValueChange={(v: number | readonly number[]) =>
+                  setBankrollPct(Array.isArray(v) ? v[0] : v)
+                }
+                max={100}
+                min={1}
+                step={1}
+                disabled={isPlacing}
+              />
+              <div className="mt-1 flex justify-between text-xs text-[var(--text-muted)]">
+                <span>1%</span>
+                <span className="text-[var(--text-secondary)]">{bankrollPct}% of bankroll</span>
+                <span>100%</span>
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="max-notional" className="text-sm text-[var(--text-primary)]">
+                Max notional per trade (USDC)
+              </Label>
+              <Input
+                id="max-notional"
+                type="number"
+                value={maxNotional}
+                onChange={(e) => setMaxNotional(Number(e.target.value))}
+                min={1}
+                max={10000}
+                disabled={isPlacing}
+                className="mt-1 bg-[var(--bg-input)] border-[var(--border)] text-[var(--text-primary)]"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="slippage" className="text-sm text-[var(--text-primary)]">
+                Slippage tolerance (%)
+              </Label>
+              <Input
+                id="slippage"
+                type="number"
+                value={slippage}
+                onChange={(e) => setSlippage(Number(e.target.value))}
+                min={0.1}
+                max={5}
+                step={0.1}
+                disabled={isPlacing}
+                className="mt-1 bg-[var(--bg-input)] border-[var(--border)] text-[var(--text-primary)]"
+              />
             </div>
           </div>
 
-          <div>
-            <Label htmlFor="max-notional">Max notional per trade (USDC)</Label>
-            <Input
-              id="max-notional"
-              type="number"
-              value={maxNotional}
-              onChange={(e) => setMaxNotional(Number(e.target.value))}
-              min={1}
-              max={10000}
-              disabled={isPlacing}
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Estimated copy amount: ${estimatedCopyAmount.toFixed(2)}
-            </p>
-          </div>
-
-          <div>
-            <Label htmlFor="slippage">Slippage tolerance (%)</Label>
-            <Input
-              id="slippage"
-              type="number"
-              value={slippage}
-              onChange={(e) => setSlippage(Number(e.target.value))}
-              min={0.1}
-              max={5}
-              step={0.1}
-              disabled={isPlacing}
-            />
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>Whale:</span>
-            <code className="font-mono">{shortenAddress(whaleAddress)}</code>
-            <Button variant="ghost" size="sm" onClick={handleCopyAddress}>
+          <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <span>Whale</span>
+            <code className="font-mono text-[var(--text-secondary)]">{shortenAddress(whaleAddress)}</code>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopyAddress}
+              className="h-7 px-2 text-[var(--text-secondary)]"
+            >
               {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
             </Button>
           </div>
@@ -228,12 +267,25 @@ export function CopyOrderModal({
           >
             Cancel
           </Button>
-          <Button
-            onClick={handlePlaceOrder}
-            disabled={isPlacing || (hasMarketContext && !canPlaceOrder) || (hasMarketContext && riskLoading)}
-          >
-            {isPlacing ? "Placing…" : "Place copy order"}
-          </Button>
+          {showBlockedOutline ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled
+              title="Risk gates must clear before placing a copy order"
+              className="border-[var(--border)] text-[var(--text-secondary)] disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Blocked by risk gates
+            </Button>
+          ) : (
+            <Button
+              onClick={handlePlaceOrder}
+              disabled={placeBlocked}
+              className="btn-accent disabled:opacity-60"
+            >
+              {isPlacing ? "Placing…" : riskLoading ? "Checking risk…" : "Place copy order"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

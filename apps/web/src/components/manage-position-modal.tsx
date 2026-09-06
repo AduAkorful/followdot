@@ -55,7 +55,7 @@ export function ManagePositionModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-lg font-bold">Manage Copied Position</DialogTitle>
           <DialogDescription className="text-[var(--text-secondary)] text-sm">

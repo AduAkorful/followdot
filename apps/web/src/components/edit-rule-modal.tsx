@@ -35,7 +35,7 @@ export function EditRuleModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]">
+      <DialogContent className="sm:max-w-md">
         <EditRuleForm key={rule.whaleAddress} rule={rule} onSaveRule={onSaveRule} onCancel={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>

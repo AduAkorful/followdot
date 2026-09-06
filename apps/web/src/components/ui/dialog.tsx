@@ -30,10 +30,20 @@ function DialogTrigger({ children }: { children: React.ReactNode }) {
 function DialogContent({ className, children, ...props }: { className?: string; children?: React.ReactNode } & React.ComponentPropsWithoutRef<'div'>) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/50" />
-      <DialogPrimitive.Popup {...props} className={cn('fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 border bg-background p-6 shadow-lg overflow-y-auto max-h-[90vh]', className)}>
+      <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm" />
+      <DialogPrimitive.Popup
+        {...props}
+        className={cn(
+          'fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4',
+          'overflow-y-auto max-h-[90vh] p-6',
+          'rounded-[var(--radius-lg)] border border-[var(--border)]',
+          'bg-[var(--bg-card)] text-[var(--text-primary)]',
+          'shadow-[var(--shadow-card),0_24px_64px_rgba(0,0,0,0.55)]',
+          className,
+        )}
+      >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100">
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-[var(--radius-sm)] p-1 text-[var(--text-muted)] opacity-80 transition-opacity hover:opacity-100 hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)]">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
@@ -43,19 +53,29 @@ function DialogContent({ className, children, ...props }: { className?: string; 
 }
 
 function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex flex-col space-y-2 text-center sm:text-left", className)} {...props} />;
+  return <div className={cn("flex flex-col space-y-1.5 text-center sm:text-left", className)} {...props} />;
 }
 
 function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex justify-end space-x-2", className)} {...props} />;
+  return <div className={cn("flex justify-end gap-2 space-x-0", className)} {...props} />;
 }
 
 function DialogTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <DialogPrimitive.Title className={cn("text-lg font-semibold", className)} {...props} />;
+  return (
+    <DialogPrimitive.Title
+      className={cn("text-lg font-semibold leading-none tracking-tight text-[var(--text-primary)]", className)}
+      {...props}
+    />
+  );
 }
 
 function DialogDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <DialogPrimitive.Description className={cn("text-sm text-muted-foreground", className)} {...props} />;
+  return (
+    <DialogPrimitive.Description
+      className={cn("text-sm text-[var(--text-secondary)]", className)}
+      {...props}
+    />
+  );
 }
 
 export { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription };
