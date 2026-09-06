@@ -54,6 +54,8 @@ export interface WhaleMarketPnL {
   isUp: boolean;
   tradeCount: number;
   won?: boolean;
+  /** Resolved or voided — exclude open unrealized from settled equity curve. */
+  settled: boolean;
   quoteDecimals: number;
 }
 

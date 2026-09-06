@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildEquityCurvePoints } from './equity-curve-data';
+import {
+  buildEquityCurvePoints,
+  countEquityCurveSettlements,
+  selectSettledEquityMarkets,
+} from './equity-curve-data';
 
 describe('buildEquityCurvePoints', () => {
   it('returns empty for empty market PnL (no fake $0 series)', () => {
@@ -45,5 +49,46 @@ describe('buildEquityCurvePoints', () => {
       [],
     );
     expect(points.map((p) => p.pnl)).toEqual([0, 2, 5]);
+  });
+});
+
+describe('selectSettledEquityMarkets', () => {
+  it('keeps settled / won markets and drops open unrealized', () => {
+    expect(
+      selectSettledEquityMarkets([
+        { marketId: '0xopen', pnl: -5, settled: false },
+        { marketId: '0xlost', pnl: -5, settled: true, won: false },
+        { marketId: '0xwon', pnl: 1, settled: true, won: true },
+        { marketId: '0xvoid', pnl: 0, settled: true },
+      ]),
+    ).toEqual([
+      { marketId: '0xlost', pnl: -5 },
+      { marketId: '0xwon', pnl: 1 },
+      { marketId: '0xvoid', pnl: 0 },
+    ]);
+  });
+
+  it('falls back to won flag when settled omitted (older payloads)', () => {
+    expect(
+      selectSettledEquityMarkets([
+        { marketId: '0xopen', pnl: -1 },
+        { marketId: '0xA', pnl: 2, won: true },
+      ]),
+    ).toEqual([{ marketId: '0xA', pnl: 2 }]);
+  });
+});
+
+describe('countEquityCurveSettlements', () => {
+  it('excludes the $0 baseline from settlement count', () => {
+    const points = buildEquityCurvePoints(
+      [{ marketId: '0xA', pnl: -5 }],
+      [{ market: '0xA', timestamp: '100' }],
+    );
+    expect(points).toHaveLength(2);
+    expect(countEquityCurveSettlements(points)).toBe(1);
+  });
+
+  it('returns 0 for empty series', () => {
+    expect(countEquityCurveSettlements([])).toBe(0);
   });
 });

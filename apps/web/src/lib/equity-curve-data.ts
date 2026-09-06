@@ -16,6 +16,39 @@ export type EquityFillTimestamp = {
   timestamp?: string | number | null;
 };
 
+/** Market PnL row that may carry settlement flags from computePerMarketPnL. */
+export type EquityMarketPnLInput = EquityMarketPnL & {
+  /** True when market is resolved or voided (settled). */
+  settled?: boolean;
+  /** Present for resolved non-voided markets. */
+  won?: boolean;
+};
+
+/**
+ * Keep only settled markets for Portfolio Growth / cumulative settled PnL.
+ * Prefer explicit `settled`; fall back to `won != null` for older payloads.
+ * Open/unresolved unrealized must not enter the settled equity curve.
+ */
+export function selectSettledEquityMarkets(
+  marketPnL: EquityMarketPnLInput[],
+): EquityMarketPnL[] {
+  return marketPnL
+    .filter((m) =>
+      m.settled === true ||
+      (m.settled === undefined && m.won !== undefined),
+    )
+    .map(({ marketId, pnl }) => ({ marketId, pnl }));
+}
+
+/**
+ * Settlement count for UI badges. buildEquityCurvePoints prepends a $0
+ * baseline, so chart point length is settlements + 1 when non-empty.
+ */
+export function countEquityCurveSettlements(points: EquityDataPoint[]): number {
+  if (points.length === 0) return 0;
+  return Math.max(0, points.length - 1);
+}
+
 /**
  * Sort markets by earliest fill timestamp (fallback: stable index), then
  * accumulate realized/settled PnL into an equity series.

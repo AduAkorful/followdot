@@ -21,7 +21,12 @@ import {
   fetchFollowRules,
 } from '@/lib/follow-rules';
 import { useClosePosition } from '@/hooks/use-close-position';
-import { buildEquityCurvePoints } from '@/lib/equity-curve-data';
+import {
+  buildEquityCurvePoints,
+  countEquityCurveSettlements,
+  selectSettledEquityMarkets,
+} from '@/lib/equity-curve-data';
+import { isCopyableMarketStatus } from '@/lib/dreamdex';
 import { EquityCurve } from '@/components/equity-curve';
 import { useQuery } from '@tanstack/react-query';
 
@@ -89,15 +94,30 @@ export default function PerformancePage() {
   const equityDataPoints = useMemo(
     () =>
       buildEquityCurvePoints(
-        equityQuery.data?.marketPnL ?? [],
+        selectSettledEquityMarkets(equityQuery.data?.marketPnL ?? []),
         equityQuery.data?.fills ?? [],
       ),
     [equityQuery.data],
+  );
+  const equitySettlementCount = useMemo(
+    () => countEquityCurveSettlements(equityDataPoints),
+    [equityDataPoints],
   );
 
   const activePositions: PositionItem[] = useMemo(() => {
     if (!portfolio?.positions?.length || !address) return [];
     return portfolio.positions.flatMap((position) => {
+      // Finalized/resolved holdings are not open — same gate as whale profiles.
+      // Lost YES tokens still sit on-chain with mark $0; Claim correctly shows $0.
+      if (
+        !isCopyableMarketStatus(
+          position.market.status,
+          position.market.winningOutcome ?? null,
+          position.market.voided,
+        )
+      ) {
+        return [];
+      }
       const money = mapHonestOpenPositionMoney(
         withRebuiltCostBasis(position, address, portfolio.fills ?? []),
       );
@@ -282,8 +302,8 @@ export default function PerformancePage() {
               <span className="badge badge-outline">
                 {equityQuery.isLoading
                   ? 'Loading…'
-                  : equityDataPoints.length > 0
-                    ? `${equityDataPoints.length} settlements`
+                  : equitySettlementCount > 0
+                    ? `${equitySettlementCount} settlement${equitySettlementCount === 1 ? '' : 's'}`
                     : fillCount > 0
                       ? `${fillCount} fills`
                       : 'No data'}

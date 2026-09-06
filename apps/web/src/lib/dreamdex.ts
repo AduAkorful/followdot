@@ -597,6 +597,8 @@ export async function computePerMarketPnL(
     isUp: boolean;
     tradeCount: number;
     won?: boolean;
+    /** Resolved or voided — safe for settled equity curve (excludes open unrealized). */
+    settled: boolean;
     quoteDecimals: number;
   }[]
 > {
@@ -683,6 +685,7 @@ export async function computePerMarketPnL(
             isUp,
             tradeCount: pnlFills.length,
             quoteDecimals: market.quoteDecimals,
+            settled,
             ...(won !== undefined ? { won } : {}),
           };
         }),

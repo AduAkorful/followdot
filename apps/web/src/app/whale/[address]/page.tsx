@@ -9,7 +9,11 @@ import { resolveConsistencyDisplay, resolveRankDisplay } from '@/lib/whale-displ
 import { useCopyOrder } from '@/hooks/use-copy-order';
 import { CopyOrderModal } from '@/components/copy-order-modal';
 import { EquityCurve } from '@/components/equity-curve';
-import { buildEquityCurvePoints } from '@/lib/equity-curve-data';
+import {
+  buildEquityCurvePoints,
+  countEquityCurveSettlements,
+  selectSettledEquityMarkets,
+} from '@/lib/equity-curve-data';
 import { EdgeAnalysisScatter } from '@/components/edge-analysis-scatter';
 import { ArrowLeft, Loader2, AlertCircle, Copy, Check, Play } from 'lucide-react';
 import Link from 'next/link';
@@ -234,8 +238,15 @@ export default function WhaleProfile() {
   }, [followerAddress, address, existingRule, queryClient]);
 
   const equityDataPoints = useMemo(
-    () => (data ? buildEquityCurvePoints(data.marketPnL, data.fills) : []),
+    () =>
+      data
+        ? buildEquityCurvePoints(selectSettledEquityMarkets(data.marketPnL), data.fills)
+        : [],
     [data],
+  );
+  const equitySettlementCount = useMemo(
+    () => countEquityCurveSettlements(equityDataPoints),
+    [equityDataPoints],
   );
 
   const handleCopyClick = (pool: string, marketId: string, side: BinarySide) => {
@@ -492,7 +503,7 @@ export default function WhaleProfile() {
             <p className="card-desc">Realized equity curve over settled binary market fills</p>
           </div>
           <span className="badge badge-accent font-mono text-xs">
-            {equityDataPoints.length} Settlements
+            {equitySettlementCount} Settlement{equitySettlementCount === 1 ? '' : 's'}
           </span>
         </div>
         <div className="card-body mt-2">
