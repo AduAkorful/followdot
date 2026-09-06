@@ -41,6 +41,12 @@ describe('grant-session-key helpers', () => {
     );
   });
 
+  it('classifySessionKeyError preserves durable-store misconfig messages', () => {
+    const msg =
+      'Session-key store has no durable backend on this host. Set KV_REST_API_URL + KV_REST_API_TOKEN';
+    expect(classifySessionKeyError(new Error(msg))).toBe(msg);
+  });
+
   it('classifySessionKeyError preserves partial on-chain registration failure', () => {
     const msg =
       'Registration failed (500). On-chain grant may have succeeded — check MetaMask activity.';

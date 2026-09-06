@@ -60,7 +60,7 @@ export default function SettingsPage() {
     setWorkerNote(data.workerNote ?? null);
   }, []);
 
-  const refreshSessionStatus = useCallback(async () => {
+  const refreshSessionStatus = useCallback(async (opts?: { keepError?: boolean }) => {
     if (!address) return;
     try {
       const data = await fetchSessionKeyStatus(address);
@@ -71,7 +71,9 @@ export default function SettingsPage() {
         onChainGranted: Boolean(data.onChainGranted),
         workerNote: data.workerNote,
       });
-      setSessionError(null);
+      // After a failed POST (chain grant ok, persist failed) keep the honest error —
+      // do not wipe it just because GET returned inactive.
+      if (!opts?.keepError) setSessionError(null);
     } catch (err) {
       setSessionError(classifySessionKeyError(err));
     }
@@ -167,7 +169,7 @@ export default function SettingsPage() {
       } else {
         setSessionError(classified);
       }
-      await refreshSessionStatus();
+      await refreshSessionStatus({ keepError: true });
     } finally {
       grantInFlightRef.current = false;
       setSessionGranting(false);

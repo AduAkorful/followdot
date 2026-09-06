@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   deleteSessionKey,
+  durableBackendConfigured,
   getSessionKey,
   isAddress,
   isPrivateKey,
+  isVercelRuntimeHint,
   putSessionKey,
+  resolveSessionKeyBackend,
+  SessionKeyPersistError,
   toPublicView,
 } from "@/lib/session-key-store";
 
@@ -15,6 +19,22 @@ function walletFrom(request: NextRequest, bodyWallet?: string): string | null {
   const query = request.nextUrl.searchParams.get("wallet")?.trim();
   const candidate = header || bodyWallet || query || "";
   return isAddress(candidate) ? candidate : null;
+}
+
+function inactivePayload(wallet: string) {
+  const backend = resolveSessionKeyBackend();
+  return {
+    active: false,
+    walletAddress: wallet.toLowerCase(),
+    sessionAddress: null,
+    grantTxHash: null,
+    onChainGranted: false,
+    storeBackend: backend,
+    workerNote:
+      backend === "file" && isVercelRuntimeHint() && !durableBackendConfigured()
+        ? "No durable session-key store configured on this host (Vercel serverless). Authorize will fail until KV_REST_API_URL+KV_REST_API_TOKEN or CF_ACCOUNT_ID+CF_API_TOKEN+CF_KV_NAMESPACE_ID are set."
+        : "No session key registered. Authorize to generate an ephemeral key and grant OperatorPermissionsRegistry place/cancel selectors.",
+  };
 }
 
 /**
@@ -30,20 +50,21 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const record = await getSessionKey(wallet);
-  if (!record) {
-    return NextResponse.json({
-      active: false,
-      walletAddress: wallet.toLowerCase(),
-      sessionAddress: null,
-      grantTxHash: null,
-      onChainGranted: false,
-      workerNote:
-        "No session key registered locally. Authorize to generate an ephemeral key and grant OperatorPermissionsRegistry place/cancel selectors.",
-    });
+  try {
+    const record = await getSessionKey(wallet);
+    if (!record) {
+      return NextResponse.json(inactivePayload(wallet));
+    }
+    return NextResponse.json(toPublicView(record));
+  } catch (err) {
+    const message =
+      err instanceof SessionKeyPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to load session key";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  return NextResponse.json(toPublicView(record));
 }
 
 /**
@@ -117,21 +138,26 @@ export async function POST(request: NextRequest) {
       grantTxHash,
       onChainGranted,
     });
+    const backend = resolveSessionKeyBackend();
     return NextResponse.json({
       address: record.sessionAddress,
-      ...toPublicView(record),
+      ...toPublicView(record, backend),
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to persist session key" },
-      { status: 500 },
-    );
+    const message =
+      err instanceof SessionKeyPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to persist session key";
+    const status = err instanceof SessionKeyPersistError ? 503 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
 /**
  * DELETE /api/auth-session-key
- * Clears the local session-key record (Settings revoke). On-chain revoke is
+ * Clears the session-key record (Settings revoke). On-chain revoke is
  * performed client-side via setOperatorApprovalGlobal(approved: false).
  */
 export async function DELETE(request: NextRequest) {
@@ -143,10 +169,22 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const deleted = await deleteSessionKey(wallet);
-  return NextResponse.json({
-    ok: true,
-    deleted,
-    walletAddress: wallet.toLowerCase(),
-  });
+  try {
+    const deleted = await deleteSessionKey(wallet);
+    return NextResponse.json({
+      ok: true,
+      deleted,
+      walletAddress: wallet.toLowerCase(),
+      storeBackend: resolveSessionKeyBackend(),
+    });
+  } catch (err) {
+    const message =
+      err instanceof SessionKeyPersistError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to delete session key";
+    const status = err instanceof SessionKeyPersistError ? 503 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }

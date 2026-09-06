@@ -210,6 +210,16 @@ export function classifySessionKeyError(err: unknown): string {
   }
 
   if (
+    lower.includes("durable backend") ||
+    lower.includes("session-key store has no durable") ||
+    lower.includes("upstash") ||
+    lower.includes("cloudflare kv") ||
+    lower.includes("vercel serverless")
+  ) {
+    return message;
+  }
+
+  if (
     lower.includes("registration failed") ||
     lower.includes("on-chain grant may have succeeded")
   ) {
